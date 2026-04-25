@@ -157,7 +157,15 @@ struct GameEngine {
             next.phase = .lost
             return EngineResult(state: next, toBoth: .gameLost(secret: next.secret ?? ""))
         }
-        return EngineResult(state: next, toBoth: .answerGiven(lastQnA))
+
+        // Send answerGiven to both players AND updated stateSnapshots so both
+        // clients always have the correct questionsRemaining value.
+        return EngineResult(
+            state: next,
+            toAnswerer: .stateSnapshot(next.answererView()),
+            toQuestioner: .stateSnapshot(next.questionerView()),
+            toBoth: .answerGiven(lastQnA)
+        )
     }
 
     private static func handleMakeGuess(
@@ -195,10 +203,10 @@ struct GameEngine {
         let distance = levenshtein(guessNorm, secretNorm)
         let feedback: String
         switch distance {
-        case 1:    feedback = "Almost! Just a spelling mistake 🔤"
-        case 2:    feedback = "So close! Check your spelling 🔥"
+        case 1:     feedback = "Almost! Just a spelling mistake 🔤"
+        case 2:     feedback = "So close! Check your spelling 🔥"
         case 3...4: feedback = "You're in the right area, keep going 💭"
-        default:   feedback = "No — keep trying"
+        default:    feedback = "No — keep trying"
         }
 
         next.questionsRemaining -= 1
@@ -206,14 +214,21 @@ struct GameEngine {
             next.phase = .lost
             return EngineResult(state: next, toBoth: .gameLost(secret: secret))
         }
+
+        let guessQnA = QnA(
+            id: UUID(),
+            questionNumber: next.questionsAsked.count,
+            question: "Guess: \(payload.guess)",
+            answer: feedback
+        )
+
+        // Send answerGiven to both AND updated stateSnapshots so questionsRemaining
+        // stays in sync on both clients after each wrong guess.
         return EngineResult(
             state: next,
-            toBoth: .answerGiven(QnA(
-                id: UUID(),
-                questionNumber: next.questionsAsked.count,
-                question: "Guess: \(payload.guess)",
-                answer: feedback
-            ))
+            toAnswerer: .stateSnapshot(next.answererView()),
+            toQuestioner: .stateSnapshot(next.questionerView()),
+            toBoth: .answerGiven(guessQnA)
         )
     }
 
@@ -347,10 +362,8 @@ struct GameEngine {
         guard playerID == state.questionerID else {
             throw EngineError.wrongPlayer
         }
-        // Grant the bonus hint
         var boosted = state
         boosted.hintsRemaining += 1
-        // Now process it exactly like a normal requestHint
         return try handleRequestHint(playerID: playerID, state: boosted)
     }
 
