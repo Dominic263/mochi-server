@@ -10,4 +10,6 @@ func routes(_ app: Application) throws {
     app.webSocket("game", "ws") { req, ws in
         controller.handleWebSocket(req: req, ws: ws)
     }
+    
+    app.get("health") { _ in ["status": "ok"] }
 }

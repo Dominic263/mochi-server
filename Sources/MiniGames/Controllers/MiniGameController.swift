@@ -4,10 +4,15 @@ import Fluent
 struct MiniGameController: RouteCollection {
 
     func boot(routes: any RoutesBuilder) throws {
+        
+        
+        
         let game = routes.grouped("game")
         game.post("create",       use: createGame)
         game.post("join",         use: joinGame)
         game.post("create-vs-ai", use: createGameVsAI)
+        
+        
     }
 
     // MARK: - Unique room code helper

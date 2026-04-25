@@ -28,6 +28,8 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateGameResult())
     try await app.autoMigrate()
 
+    
+   
     // MARK: - Routes
     try routes(app)
 }
