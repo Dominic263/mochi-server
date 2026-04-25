@@ -1,27 +1,33 @@
-import NIOSSL
 import Fluent
 import FluentPostgresDriver
-import Leaf
 import Vapor
 
-// configures your application
 public func configure(_ app: Application) async throws {
-    // uncomment to serve files from /Public folder
-    // app.middleware.use(FileMiddleware(publicDirectory: app.directory.publicDirectory))
 
-    app.databases.use(DatabaseConfigurationFactory.postgres(configuration: .init(
-        hostname: Environment.get("DATABASE_HOST") ?? "localhost",
-        port: Environment.get("DATABASE_PORT").flatMap(Int.init(_:)) ?? SQLPostgresConfiguration.ianaPortNumber,
-        username: Environment.get("DATABASE_USERNAME") ?? "vapor_username",
-        password: Environment.get("DATABASE_PASSWORD") ?? "vapor_password",
-        database: Environment.get("DATABASE_NAME") ?? "vapor_database",
-        tls: .prefer(try .init(configuration: .clientDefault)))
-    ), as: .psql)
+    // MARK: - Postgres
+    // On Coolify, DATABASE_URL is injected automatically from the linked Postgres service.
+    // Locally, fall back to individual env vars (no TLS — local Postgres doesn't need it).
+    if let databaseURL = Environment.get("DATABASE_URL") {
+        try app.databases.use(.postgres(url: databaseURL), as: .psql)
+    } else {
+        app.databases.use(
+            DatabaseConfigurationFactory.postgres(configuration: .init(
+                hostname: Environment.get("DB_HOST") ?? "localhost",
+                port:     Environment.get("DB_PORT").flatMap(Int.init(_:)) ?? SQLPostgresConfiguration.ianaPortNumber,
+                username: Environment.get("DB_USER") ?? "vapor",
+                password: Environment.get("DB_PASS") ?? "vapor",
+                database: Environment.get("DB_NAME") ?? "minigames",
+                tls: .disable
+            )),
+            as: .psql
+        )
+    }
 
-    app.migrations.add(CreateTodo())
+    // MARK: - Migrations
+    app.migrations.add(CreateGameSession())
+    app.migrations.add(CreateGameResult())
+    try await app.autoMigrate()
 
-    app.views.use(.leaf)
-
-    // register routes
+    // MARK: - Routes
     try routes(app)
 }

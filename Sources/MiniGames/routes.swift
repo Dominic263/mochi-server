@@ -1,14 +1,13 @@
-import Fluent
 import Vapor
 
 func routes(_ app: Application) throws {
-    app.get { req async throws in
-        try await req.view.render("index", ["title": "Hello Vapor!"])
-    }
+    let controller = MiniGameController()
+    try app.register(collection: controller)
 
-    app.get("hello") { req async -> String in
-        "Hello, world!"
+    // WebSocket route registered outside any auth middleware.
+    // WS upgrade requests cannot carry Authorization headers —
+    // identity is established via the one-time token in the query string.
+    app.webSocket("game", "ws") { req, ws in
+        controller.handleWebSocket(req: req, ws: ws)
     }
-
-    try app.register(collection: TodoController())
 }
