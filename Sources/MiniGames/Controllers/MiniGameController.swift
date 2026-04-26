@@ -297,6 +297,11 @@ struct MiniGameController: RouteCollection {
         }
 
         ws.onClose.whenComplete { _ in
+            // Always clean up the AI player for this room on any disconnect.
+            // This covers the case where a human leaves mid-game without sending
+            // dismissGame — the AI task is released and stops consuming resources.
+            WebSocketManager.shared.removeAI(roomCode: roomCode)
+
             if let state = WebSocketManager.shared.disconnect(roomCode: roomCode, role: role) {
                 db.query(GameSession.self)
                     .filter(\.$roomCode == roomCode)

@@ -78,7 +78,7 @@ final class WebSocketManager: @unchecked Sendable {
         }
     }
 
-    // MARK: - Close both connections
+    // MARK: - Close both connections and clean up everything
 
     func closeBothConnections(roomCode: String) {
         queue.async(flags: .barrier) {
@@ -86,14 +86,13 @@ final class WebSocketManager: @unchecked Sendable {
             room.answererSend = nil
             room.questionerSend = nil
             self.rooms.removeValue(forKey: roomCode)
+            self.aiPlayers.removeValue(forKey: roomCode)
         }
     }
 
     // MARK: - Message handling
 
     func handle(raw: String, playerID: String, roomCode: String, role: PlayerRole) {
-        // Run on barrier so reads and writes are safe
-        // Use async to avoid blocking the NIO event loop thread
         queue.async(flags: .barrier) {
             guard let room = self.rooms[roomCode] else { return }
 
@@ -106,6 +105,9 @@ final class WebSocketManager: @unchecked Sendable {
                 room.answererSend = nil
                 room.questionerSend = nil
                 self.rooms.removeValue(forKey: roomCode)
+                // Clean up any AI player associated with this room so its
+                // goroutine/task is released and stops consuming resources.
+                self.aiPlayers.removeValue(forKey: roomCode)
                 return
             }
 
@@ -122,16 +124,12 @@ final class WebSocketManager: @unchecked Sendable {
             }
 
             do {
-                // Broadcast typing indicator to the waiting player before processing
-                // so they see dots while the response is being prepared
                 switch action.type {
                 case .askQuestion:
-                    // Answerer will see dots while questioner's question is processed
                     if let room = self.rooms[roomCode] {
                         room.sendToAnswerer(.typingIndicator())
                     }
                 case .answerQuestion:
-                    // Questioner will see dots while answerer's response is processed
                     if let room = self.rooms[roomCode] {
                         room.sendToQuestioner(.typingIndicator())
                     }
@@ -152,6 +150,8 @@ final class WebSocketManager: @unchecked Sendable {
                     room.answererSend = nil
                     room.questionerSend = nil
                     self.rooms.removeValue(forKey: roomCode)
+                    // Clean up AI player when connections are closed by the engine
+                    self.aiPlayers.removeValue(forKey: roomCode)
                 }
             } catch {
                 print("❌ [\(roomCode)] engine error for \(action.type.rawValue): \(error)")
