@@ -52,7 +52,7 @@ struct EngineResult {
 // MARK: - Engine
 
 struct GameEngine {
-
+    
     static func process(
         action: GameActionEnvelope,
         playerID: String,
@@ -83,9 +83,9 @@ struct GameEngine {
             return try handleProvideHint(p, playerID: playerID, state: state)
         }
     }
-
+    
     // MARK: - Handlers
-
+    
     private static func handleSetSecret(
         _ payload: SetSecretPayload,
         playerID: String,
@@ -105,7 +105,7 @@ struct GameEngine {
             toQuestioner: .secretSet()
         )
     }
-
+    
     private static func handleAskQuestion(
         _ payload: AskQuestionPayload,
         playerID: String,
@@ -133,7 +133,7 @@ struct GameEngine {
         next.questionsAsked.append(qna)
         return EngineResult(state: next, toBoth: .questionAsked(qna))
     }
-
+    
     private static func handleAnswerQuestion(
         _ payload: AnswerQuestionPayload,
         playerID: String,
@@ -152,12 +152,12 @@ struct GameEngine {
         var next = state
         next.questionsAsked[next.questionsAsked.count - 1] = lastQnA
         next.questionsRemaining -= 1
-
+        
         if next.questionsRemaining == 0 {
             next.phase = .lost
             return EngineResult(state: next, toBoth: .gameLost(secret: next.secret ?? ""))
         }
-
+        
         // Send answerGiven to both players AND updated stateSnapshots so both
         // clients always have the correct questionsRemaining value.
         return EngineResult(
@@ -167,7 +167,7 @@ struct GameEngine {
             toBoth: .answerGiven(lastQnA)
         )
     }
-
+    
     private static func handleMakeGuess(
         _ payload: MakeGuessPayload,
         playerID: String,
@@ -182,7 +182,7 @@ struct GameEngine {
         guard let secret = state.secret else {
             throw EngineError.secretNotSet
         }
-
+        
         let guessNorm  = payload.guess.lowercased()
             .components(separatedBy: .init(charactersIn: "abcdefghijklmnopqrstuvwxyz").inverted)
             .joined()
@@ -190,7 +190,7 @@ struct GameEngine {
             .components(separatedBy: .init(charactersIn: "abcdefghijklmnopqrstuvwxyz").inverted)
             .joined()
         let correct = guessNorm == secretNorm
-
+        
         var next = state
         if correct {
             next.phase = .won
@@ -199,7 +199,7 @@ struct GameEngine {
                 toBoth: .gameWon(secret: secret, questionsUsed: 20 - next.questionsRemaining)
             )
         }
-
+        
         let distance = levenshtein(guessNorm, secretNorm)
         let feedback: String
         switch distance {
@@ -208,20 +208,20 @@ struct GameEngine {
         case 3...4: feedback = "You're in the right area, keep going 💭"
         default:    feedback = "No — keep trying"
         }
-
+        
         next.questionsRemaining -= 1
         if next.questionsRemaining == 0 {
             next.phase = .lost
             return EngineResult(state: next, toBoth: .gameLost(secret: secret))
         }
-
+        
         let guessQnA = QnA(
             id: UUID(),
             questionNumber: next.questionsAsked.count,
             question: "Guess: \(payload.guess)",
             answer: feedback
         )
-
+        
         // Send answerGiven to both AND updated stateSnapshots so questionsRemaining
         // stays in sync on both clients after each wrong guess.
         return EngineResult(
@@ -231,9 +231,9 @@ struct GameEngine {
             toBoth: .answerGiven(guessQnA)
         )
     }
-
+    
     // MARK: - Levenshtein distance
-
+    
     private static func levenshtein(_ a: String, _ b: String) -> Int {
         let a = Array(a), b = Array(b)
         let m = a.count, n = b.count
@@ -253,9 +253,9 @@ struct GameEngine {
         }
         return dp[m][n]
     }
-
+    
     // MARK: - Restart
-
+    
     private static func handleRequestRestart(
         playerID: String,
         state: GameState
@@ -263,9 +263,9 @@ struct GameEngine {
         guard state.phase == .won || state.phase == .lost || state.phase == .waitingForRematch else {
             throw EngineError.wrongPhase(expected: .won, actual: state.phase)
         }
-
+        
         var next = state
-
+        
         if next.restartRequestedBy == nil {
             next.phase = .waitingForRematch
             next.restartRequestedBy = playerID
@@ -273,16 +273,16 @@ struct GameEngine {
             let toQuestioner: GameEventEnvelope? = playerID == state.questionerID ? nil : .restartRequested()
             return EngineResult(state: next, toAnswerer: toAnswerer, toQuestioner: toQuestioner)
         }
-
+        
         guard next.restartRequestedBy != playerID else {
             return EngineResult(state: next)
         }
-
+        
         let newAnswererID            = next.questionerID ?? next.answererID
         let newAnswererDisplayName   = next.questionerDisplayName ?? next.answererDisplayName
         let newQuestionerID          = next.answererID
         let newQuestionerDisplayName = next.answererDisplayName
-
+        
         var fresh = GameState(
             roomCode: state.roomCode,
             answererID: newAnswererID,
@@ -291,14 +291,14 @@ struct GameEngine {
         fresh.questionerID          = newQuestionerID
         fresh.questionerDisplayName = newQuestionerDisplayName
         fresh.phase                 = .lobby
-
+        
         return EngineResult(
             state: fresh,
             toAnswerer: .gameRestarted(fresh.answererView()),
             toQuestioner: .gameRestarted(fresh.questionerView())
         )
     }
-
+    
     private static func handleStartGame(
         playerID: String,
         state: GameState
@@ -321,9 +321,9 @@ struct GameEngine {
             toBoth: .gameStarted()
         )
     }
-
+    
     // MARK: - Hint handlers
-
+    
     private static func handleRequestHint(
         playerID: String,
         state: GameState
@@ -331,23 +331,36 @@ struct GameEngine {
         guard state.phase == .playing else {
             throw EngineError.wrongPhase(expected: .playing, actual: state.phase)
         }
+        
         guard playerID == state.questionerID else {
             throw EngineError.wrongPlayer
         }
+        
         guard state.hintsRemaining > 0 else {
             return EngineResult(
                 state: state,
                 toQuestioner: .error("No hints remaining.")
             )
         }
+        
+        guard state.hintPending == false else {
+            return EngineResult(
+                state: state,
+                toQuestioner: .error("A hint is already pending.")
+            )
+        }
+        
         var next = state
+        next.hintsRemaining -= 1
         next.hintPending = true
+        
         return EngineResult(
             state: next,
-            toAnswerer: .hintRequested()
+            toAnswerer: .hintRequested(),
+            toQuestioner: .stateSnapshot(next.questionerView())
         )
     }
-
+    
     // Rewarded hint: the client has verified an ad was watched, so we grant
     // +1 to hintsRemaining before processing the hint request as normal.
     // The client-side guard (rewardedHintUsedCount < 3) caps how many times
@@ -366,7 +379,7 @@ struct GameEngine {
         boosted.hintsRemaining += 1
         return try handleRequestHint(playerID: playerID, state: boosted)
     }
-
+    
     private static func handleProvideHint(
         _ payload: ProvideHintPayload,
         playerID: String,
@@ -375,18 +388,25 @@ struct GameEngine {
         guard state.phase == .playing else {
             throw EngineError.wrongPhase(expected: .playing, actual: state.phase)
         }
+        
         guard playerID == state.answererID else {
             throw EngineError.wrongPlayer
         }
-        guard state.hintsRemaining > 0 else {
+        
+        guard state.hintPending else {
             return EngineResult(state: state)
         }
+        
         var next = state
-        next.hintsRemaining -= 1
         next.hintPending = false
+        
         return EngineResult(
             state: next,
-            toQuestioner: .hintGiven(hint: payload.hint, hintsRemaining: next.hintsRemaining)
+            toAnswerer: .stateSnapshot(next.answererView()),
+            toQuestioner: .hintGiven(
+                hint: payload.hint,
+                hintsRemaining: next.hintsRemaining
+            )
         )
     }
 }
