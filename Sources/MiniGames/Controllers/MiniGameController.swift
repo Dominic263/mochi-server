@@ -8,6 +8,65 @@ struct MiniGameController: RouteCollection {
         game.post("create",       use: createGame)
         game.post("join",         use: joinGame)
         game.post("create-vs-ai", use: createGameVsAI)
+        game.post("reconnect", use: reconnect)
+    }
+    
+    // Add to MiniGameController.swift
+
+    // MARK: - POST /game/reconnect
+    // Finds any active game where this player is a participant and returns
+    // a fresh token + current game state. Handles both multiplayer and AI games.
+
+    func reconnect(req: Request) async throws -> ReconnectResponse {
+        struct Body: Content {
+            let playerID: String
+        }
+        let body = try req.content.decode(Body.self)
+        
+        // Find any active session where this player is answerer or questioner
+        let activeSessions = try await GameSession.query(on: req.db)
+            .group(.or) { group in
+                group.filter(\.$answererID == body.playerID)
+                group.filter(\.$questionerID == body.playerID)
+            }
+            .filter(\.$phase ~~ ["lobby", "playing"]) // Only active games
+            .sort(\.$updatedAt, .descending) // Most recent first
+            .all()
+        
+        guard let session = activeSessions.first else {
+            throw Abort(.notFound, reason: "No active game found for this player.")
+        }
+        
+        guard let state = session.loadState() else {
+            throw Abort(.internalServerError, reason: "Could not load game state.")
+        }
+        
+        // Determine player's role
+        let role: PlayerRole = body.playerID == state.answererID ? .answerer : .questioner
+        let displayName = role == .answerer
+            ? state.answererDisplayName
+            : state.questionerDisplayName ?? "Player"
+        
+        // Generate fresh token for reconnection
+        let token = UUID().uuidString
+        PendingConnections.shared.add(
+            token: token,
+            connection: PendingConnection(
+                playerID: body.playerID,
+                roomCode: state.roomCode,
+                role: role,
+                displayName: displayName
+            )
+        )
+        
+        req.logger.info("🔄 Player \(body.playerID) reconnecting to \(state.roomCode) as \(role.rawValue)")
+        
+        return ReconnectResponse(
+            roomCode: state.roomCode,
+            token: token,
+            role: role.rawValue,
+            phase: state.phase.rawValue
+        )
     }
 
     // MARK: - Unique room code helper
@@ -337,4 +396,11 @@ struct JoinGameResponse: Content {
 struct RematchResponse: Content {
     let token: String
     let roomCode: String
+}
+
+struct ReconnectResponse: Content {
+    let roomCode: String
+    let token: String
+    let role: String       // "answerer" or "questioner"
+    let phase: String      // Current game phase
 }
