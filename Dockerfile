@@ -31,6 +31,7 @@ RUN --mount=type=cache,target=/build/.build \
     swift build -c release \
         --product MiniGames \
         --static-swift-stdlib \
+        -Xswiftc -strict-concurrency=minimal \
         -Xlinker -ljemalloc && \
     # Copy main executable to staging area
     cp "$(swift build -c release --show-bin-path)/MiniGames" /staging && \
