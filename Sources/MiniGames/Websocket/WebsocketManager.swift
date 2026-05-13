@@ -126,9 +126,11 @@ final class WebSocketManager: @unchecked Sendable {
         cancelCleanupTimer(for: roomCode)
         
         let workItem = DispatchWorkItem { [weak self] in
-            self?.queue.async(flags: .barrier) {
+            guard let self = self else { return }
+            
+            self.queue.async(flags: .barrier) {
                 // Only cleanup if still disconnected
-                guard let room = self?.rooms[roomCode],
+                guard let room = self.rooms[roomCode],
                       room.answererSend == nil,
                       room.questionerSend == nil else {
                     print("⏰ [\(roomCode)] Cleanup cancelled - player reconnected")
@@ -136,9 +138,9 @@ final class WebSocketManager: @unchecked Sendable {
                 }
                 
                 print("🗑️ [\(roomCode)] Cleanup timeout reached → removing room")
-                self?.rooms.removeValue(forKey: roomCode)
-                self?.aiPlayers.removeValue(forKey: roomCode)
-                self?.cleanupTimers.removeValue(forKey: roomCode)
+                self.rooms.removeValue(forKey: roomCode)
+                self.aiPlayers.removeValue(forKey: roomCode)
+                self.cleanupTimers.removeValue(forKey: roomCode)
             }
         }
         
