@@ -89,13 +89,23 @@ struct MeController: RouteCollection {
     // MARK: - Shared query
 
     /// All results where the account is the answerer OR the questioner.
+    /// Two plain queries merged (the relational key-path filter is reliable
+    /// OUTSIDE a `.group` closure, where type inference otherwise fails).
     private func resultsForAccount(_ accountID: UUID, on db: any Database) async throws -> [GameResult] {
-        try await GameResult.query(on: db)
-            .group(.or) { group in
-                group.filter(\.$answererAccount.$id == accountID)
-                group.filter(\.$questionerAccount.$id == accountID)
-            }
+        async let asAnswerer = GameResult.query(on: db)
+            .filter(\.$answererAccount.$id == accountID)
             .all()
+        async let asQuestioner = GameResult.query(on: db)
+            .filter(\.$questionerAccount.$id == accountID)
+            .all()
+
+        // Merge + de-dupe by id (a row could match both sides in edge cases).
+        let combined = try await (asAnswerer + asQuestioner)
+        var seen = Set<UUID>()
+        return combined.filter { r in
+            guard let id = r.id else { return true }
+            return seen.insert(id).inserted
+        }
     }
 }
 

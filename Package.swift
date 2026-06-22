@@ -17,6 +17,8 @@ let package = Package(
         .package(url: "https://github.com/vapor/leaf.git", from: "4.3.0"),
         // 🔵 Non-blocking, event-driven networking for Swift. Used for custom executors
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
+        // 🔑 JWT signing/verification — used for Sign in with Apple identity tokens (S2).
+        .package(url: "https://github.com/vapor/jwt.git", from: "5.0.0"),
     ],
     targets: [
         .executableTarget(
@@ -26,6 +28,7 @@ let package = Package(
                 .product(name: "FluentPostgresDriver", package: "fluent-postgres-driver"),
                 .product(name: "Leaf", package: "leaf"),
                 .product(name: "Vapor", package: "vapor"),
+                .product(name: "JWT", package: "jwt"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],

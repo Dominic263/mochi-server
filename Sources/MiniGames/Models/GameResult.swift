@@ -6,6 +6,11 @@ import Vapor
 // Never updated — used for stats, history, and leaderboards.
 // Kept separate from GameSession so session rows can be reset
 // without losing historical records.
+//
+// S3: now also carries nullable account references. The raw answererID /
+// questionerID strings are kept (they're the in-game client UUIDs and the AI's
+// ephemeral id), and alongside them we stamp the resolved ACCOUNT for each human
+// side. The AI side — and any pre-account rows — leave the account null.
 
 final class GameResult: Model, Content, @unchecked Sendable {
     static let schema = "game_results"
@@ -24,6 +29,13 @@ final class GameResult: Model, Content, @unchecked Sendable {
 
     @Field(key: "questioner_id")
     var questionerID: String
+
+    // Resolved accounts (nullable — AI side / pre-account rows are null).
+    @OptionalParent(key: "answerer_account_id")
+    var answererAccount: Account?
+
+    @OptionalParent(key: "questioner_account_id")
+    var questionerAccount: Account?
 
     @Field(key: "outcome")
     var outcome: String           // "won" or "lost"
@@ -46,7 +58,9 @@ final class GameResult: Model, Content, @unchecked Sendable {
         questionerID: String,
         outcome: String,
         secret: String,
-        questionsUsed: Int
+        questionsUsed: Int,
+        answererAccountID: UUID? = nil,
+        questionerAccountID: UUID? = nil
     ) {
         self.roomCode      = roomCode
         self.gameType      = gameType
@@ -55,5 +69,7 @@ final class GameResult: Model, Content, @unchecked Sendable {
         self.outcome       = outcome
         self.secret        = secret
         self.questionsUsed = questionsUsed
+        self.$answererAccount.id   = answererAccountID
+        self.$questionerAccount.id = questionerAccountID
     }
 }
