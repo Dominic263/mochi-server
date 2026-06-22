@@ -1,0 +1,65 @@
+#extend("base"):
+#export("title"):Home#endexport
+#export("activePage"):home#endexport
+
+#export("content"):
+
+<section class="hero">
+
+    <!-- LEFT: copy -->
+    <div class="hero-left">
+        <div class="hero-badge">
+            <span class="badge-dot"></span>
+            Now on the App Store
+        </div>
+
+        <h1 class="hero-title">
+            Guess the word.<br>
+            <span class="accent">Win the party.</span>
+        </h1>
+
+        <p class="hero-sub">
+            Mochi is the multiplayer 20-questions word game. Ask, deduce, and race to guess the secret word — solo or against friends.
+        </p>
+
+        <div class="hero-actions">
+            <a class="store-btn" href="https://apps.apple.com/app/id6762576982" target="_blank" rel="noopener" aria-label="Download Mochi on the App Store">
+                <span class="store-btn-icon"></span>
+                <span class="store-btn-text">
+                    <small>Download on the</small>
+                    <strong>App Store</strong>
+                </span>
+            </a>
+            <span class="btn-hint">Free to play · Fun for everyone</span>
+        </div>
+    </div>
+
+    <!-- RIGHT: mockup image -->
+    <div class="hero-right">
+        <img class="mockup-img" src="/images/mockup.png" alt="Mochi app">
+    </div>
+
+</section>
+
+<section class="features">
+    <div class="features-grid">
+        <div class="feat">
+            <div class="feat-icon">🎯</div>
+            <div class="feat-title">20 questions</div>
+            <p class="feat-desc">Narrow it down with smart yes/no questions before your turns run out. Every guess counts.</p>
+        </div>
+        <div class="feat">
+            <div class="feat-icon">🏆</div>
+            <div class="feat-title">Win rewards</div>
+            <p class="feat-desc">Earn coins, climb levels, and unlock fun cosmetics to dress up your Mochi however you like.</p>
+        </div>
+        <div class="feat">
+            <div class="feat-icon">🎉</div>
+            <div class="feat-title">Play together</div>
+            <p class="feat-desc">Challenge friends in real-time multiplayer word battles, or sharpen your skills solo.</p>
+        </div>
+    </div>
+</section>
+
+#endexport
+#endextend

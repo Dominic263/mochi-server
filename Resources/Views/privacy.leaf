@@ -1,0 +1,57 @@
+#extend("base"):
+#export("title"):Privacy Policy#endexport
+#export("activePage"):privacy#endexport
+
+#export("content"):
+
+<div class="page-header">
+    <div class="page-header-inner">
+        <p class="eyebrow">Legal</p>
+        <h1 class="page-title">Privacy Policy</h1>
+        <p class="page-date">Effective date: June 22, 2026</p>
+    </div>
+</div>
+
+<div class="doc-body">
+
+    <p>This Privacy Policy describes how Relentless Forge LLC ("we," "us," or "our") collects, uses, and discloses information when you use the Mochi mobile application (the "Service"). Mochi is designed to be played without an account, and we collect as little information as possible.</p>
+
+    <h2>1. Information We Collect</h2>
+    <p>Mochi can be played entirely without an account. To save your progress, a random device identifier is generated and stored locally on your device. If you choose to sign in with Apple, we receive a privacy-preserving identifier that lets you sync progress across devices — we do not receive your name or email unless you explicitly choose to share them.</p>
+
+    <h2>2. How We Use Information</h2>
+    <p>We use the limited information described above to save and sync your game progress, operate and improve the Service, and address technical issues. We do not sell your personal information.</p>
+
+    <h2>3. Advertising</h2>
+    <p>Mochi displays ads through Google AdMob. AdMob may use device identifiers to deliver and measure ads. You can remove ads at any time through an in-app purchase. For details on how Google uses data when you use our Service, please review Google's privacy and advertising policies.</p>
+
+    <h2>4. Purchases</h2>
+    <p>In-app purchases are processed entirely by Apple. We do not receive or store your payment card details. Purchases are subject to Apple's terms and refund policies.</p>
+
+    <h2>5. Third-Party Services</h2>
+    <p>Mochi relies on the following third-party services, each with its own privacy policy:</p>
+    <ul>
+        <li>Apple — App distribution, in-app purchases, and Sign in with Apple</li>
+        <li>Google AdMob — Advertising</li>
+    </ul>
+
+    <h2>6. Children's Privacy</h2>
+    <p>Mochi does not knowingly collect personal information from children in a manner that would require verifiable parental consent under applicable law. If you believe a child has provided us with personal information, please contact us and we will take appropriate steps.</p>
+
+    <h2>7. Data Security</h2>
+    <p>We take reasonable measures to protect information handled by the Service. However, no method of transmission or storage is completely secure, and we cannot guarantee absolute security.</p>
+
+    <h2>8. Changes to This Policy</h2>
+    <p>We may update this Privacy Policy from time to time. We will post the updated policy on this page and revise the effective date above.</p>
+
+    <h2>9. Contact Us</h2>
+    <p>If you have any questions about this Privacy Policy, please contact us:</p>
+    <ul>
+        <li>Email: <a href="mailto:dominic.ndondo@outlook.com">dominic.ndondo@outlook.com</a></li>
+        <li>Website: <a href="https://playmochiapp.com">playmochiapp.com</a></li>
+    </ul>
+
+</div>
+
+#endexport
+#endextend

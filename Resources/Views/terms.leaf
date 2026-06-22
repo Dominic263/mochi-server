@@ -1,0 +1,47 @@
+#extend("base"):
+#export("title"):Terms of Service#endexport
+#export("activePage"):terms#endexport
+
+#export("content"):
+
+<div class="page-header">
+    <div class="page-header-inner">
+        <p class="eyebrow">Legal</p>
+        <h1 class="page-title">Terms of Service</h1>
+        <p class="page-date">Effective date: June 22, 2026</p>
+    </div>
+</div>
+
+<div class="doc-body">
+
+    <p>By downloading or using Mochi (the "Service"), operated by Relentless Forge LLC ("we," "us," or "our"), you agree to these Terms of Service. Please read them carefully.</p>
+
+    <h2>1. Using Mochi</h2>
+    <p>Mochi is provided for your personal, non-commercial entertainment. You agree not to misuse the Service, disrupt multiplayer games, attempt to gain unauthorized access, or reverse-engineer the app.</p>
+
+    <h2>2. Virtual Items and Purchases</h2>
+    <p>Coins, lives, cosmetics, and other in-game items are virtual items with no real-world monetary value. They cannot be redeemed for cash and may not be transferred or sold. In-app purchases are processed by Apple and are final, subject to Apple's refund policies.</p>
+
+    <h2>3. Advertising</h2>
+    <p>The Service may display advertisements. You may remove ads through an in-app purchase. Optional rewarded ads let you earn in-game items in exchange for viewing them.</p>
+
+    <h2>4. Availability and Changes</h2>
+    <p>We aim to keep Mochi available, fair, and fun, but we provide the Service "as is" and "as available." We may update, change, suspend, or discontinue any part of the Service at any time without notice.</p>
+
+    <h2>5. Limitation of Liability</h2>
+    <p>To the maximum extent permitted by law, Relentless Forge LLC shall not be liable for any indirect, incidental, special, or consequential damages arising out of or related to your use of the Service.</p>
+
+    <h2>6. Changes to These Terms</h2>
+    <p>We may revise these Terms from time to time. The most current version will always be posted on this page with an updated effective date. Your continued use of the Service constitutes acceptance of the revised Terms.</p>
+
+    <h2>7. Contact Us</h2>
+    <p>If you have any questions about these Terms, please contact us:</p>
+    <ul>
+        <li>Email: <a href="mailto:dominic.ndondo@outlook.com">dominic.ndondo@outlook.com</a></li>
+        <li>Website: <a href="https://playmochiapp.com">playmochiapp.com</a></li>
+    </ul>
+
+</div>
+
+#endexport
+#endextend

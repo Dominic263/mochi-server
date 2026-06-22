@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>#import("title") — Mochi</title>
+    <meta name="description" content="Mochi — the multiplayer 20-questions word game. Guess the word, win the party.">
+
+    <!-- Open Graph / iMessage / Social previews -->
+    <meta property="og:type"        content="website">
+    <meta property="og:url"         content="https://playmochiapp.com">
+    <meta property="og:title"       content="Mochi — Word Party">
+    <meta property="og:description" content="The multiplayer 20-questions word game. Guess the word, win the party.">
+    <meta property="og:image"       content="https://playmochiapp.com/images/og-image.png">
+    <meta property="og:image:width"  content="1200">
+    <meta property="og:image:height" content="630">
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card"        content="summary_large_image">
+    <meta name="twitter:title"       content="Mochi — Word Party">
+    <meta name="twitter:description" content="The multiplayer 20-questions word game. Guess the word, win the party.">
+    <meta name="twitter:image"       content="https://playmochiapp.com/images/og-image.png">
+
+    <link rel="icon" href="/images/logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Nunito+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+
+<header>
+    <nav class="nav">
+        <div class="nav-inner">
+            <a href="/" class="nav-logo">
+                <img src="/images/logo.png" alt="Mochi" class="logo-mark-img">
+                Mochi
+            </a>
+
+            <ul class="nav-links">
+                <li><a href="/privacy" #if(activePage == "privacy"):class="active"#endif>Privacy</a></li>
+                <li><a href="/terms" #if(activePage == "terms"):class="active"#endif>Terms</a></li>
+                <li><a href="https://apps.apple.com/app/id6762576982" target="_blank" rel="noopener" class="nav-pill">Get the app</a></li>
+            </ul>
+        </div>
+    </nav>
+</header>
+
+<main>
+    #import("content")
+</main>
+
+<footer class="footer">
+    <div class="footer-inner">
+
+        <!-- Brand column -->
+        <div class="footer-brand-col">
+            <div class="footer-brand">
+                <img src="/images/logo.png" alt="Mochi" class="footer-logo-img">
+                Mochi
+            </div>
+            <p class="footer-tagline">Guess the word.<br>Win the party.</p>
+        </div>
+
+        <!-- Product column -->
+        <div class="footer-col">
+            <p class="footer-col-heading">Product</p>
+            <a href="/">Home</a>
+            <a href="https://apps.apple.com/app/id6762576982" target="_blank" rel="noopener">Download</a>
+        </div>
+
+        <!-- Legal column -->
+        <div class="footer-col">
+            <p class="footer-col-heading">Legal</p>
+            <a href="/terms">Terms of Service</a>
+            <a href="/privacy">Privacy Policy</a>
+        </div>
+
+        <!-- Contact column -->
+        <div class="footer-col">
+            <p class="footer-col-heading">Contact</p>
+            <a href="mailto:dominic.ndondo@outlook.com">dominic.ndondo@outlook.com</a>
+        </div>
+
+    </div>
+    <div class="footer-bottom">
+        <p class="footer-copy">© 2026 Relentless Forge LLC. All rights reserved.</p>
+    </div>
+</footer>
+
+<script>
+    const nav = document.querySelector('.nav');
+    window.addEventListener('scroll', () => {
+        nav.classList.toggle('scrolled', window.scrollY > 10);
+    }, { passive: true });
+</script>
+</body>
+</html>
