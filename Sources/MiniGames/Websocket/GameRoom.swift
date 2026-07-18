@@ -5,6 +5,22 @@ final class GameRoom {
     var answererSend: ((String) -> Void)?
     var questionerSend: ((String) -> Void)?
 
+    /// Which side is played by a server-side AI (nil for human-vs-human rooms).
+    /// Lets lifecycle code reason about "is a human still here" — the AI's send
+    /// closure never goes nil on its own, which used to keep AI rooms alive forever.
+    var aiRole: PlayerRole?
+
+    /// Idempotency guard: set once when the terminal GameResult row is enqueued
+    /// so extra messages arriving in the won/lost phase can't write duplicates.
+    /// Reset when a rematch puts the room back into play.
+    var resultWritten = false
+
+    /// Generation markers for each side's live socket. A reconnect replaces the
+    /// send closure AND the id; the OLD socket's close handler then no-ops
+    /// instead of nulling out the fresh connection.
+    var answererConnectionID: UUID?
+    var questionerConnectionID: UUID?
+
     init(state: GameState) {
         self.state = state
     }

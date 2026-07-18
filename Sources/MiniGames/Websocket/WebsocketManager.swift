@@ -8,16 +8,23 @@ final class WebSocketManager: @unchecked Sendable {
 
     private var rooms: [String: GameRoom] = [:]
     private var aiPlayers: [String: AIPlayer] = [:]
-    private var cleanupTimers: [String: DispatchWorkItem] = [:]  // NEW: Track scheduled cleanups
+    // Structured-concurrency cleanup timers. The previous implementation used
+    // DispatchQueue.main.asyncAfter, but the main queue is never serviced in a
+    // Vapor/NIO process (the main thread is parked in app.execute()) — those
+    // work items never fired and rooms leaked forever.
+    private var cleanupTimers: [String: Task<Void, Never>] = [:]
     private let queue = DispatchQueue(label: "com.minigames.wsmanager", attributes: .concurrent)
-    
+
     // Configuration
     private let roomCleanupTimeout: TimeInterval = 600  // 10 minutes (adjustable)
 
     // MARK: - AI Player registration
 
     func registerAI(_ ai: AIPlayer, roomCode: String) {
-        queue.async(flags: .barrier) { self.aiPlayers[roomCode] = ai }
+        queue.async(flags: .barrier) {
+            self.aiPlayers[roomCode] = ai
+            self.rooms[roomCode]?.aiRole = ai.role
+        }
     }
 
     func routeToAI(playerID: String, roomCode: String, json: String) {
@@ -50,14 +57,20 @@ final class WebSocketManager: @unchecked Sendable {
 
     // MARK: - Connection
 
-    func connectAnswerer(roomCode: String, send: @escaping @Sendable (String) -> Void) {
-        queue.async(flags: .barrier) {
-            guard let room = self.rooms[roomCode] else { return }
+    /// Connects the answerer's socket. Returns a connection id the caller must
+    /// hand back to disconnect() so a stale socket can't tear down a newer one.
+    @discardableResult
+    func connectAnswerer(roomCode: String, send: @escaping @Sendable (String) -> Void) -> UUID? {
+        queue.sync(flags: .barrier) {
+            guard let room = self.rooms[roomCode] else { return nil }
+            let connectionID = UUID()
             room.answererSend = send
-            
+            room.answererConnectionID = connectionID
+
             // If answerer reconnects, cancel any pending cleanup
             self.cancelCleanupTimer(for: roomCode)
             print("✅ [\(roomCode)] Answerer connected/reconnected")
+            return connectionID
         }
     }
 
@@ -66,86 +79,111 @@ final class WebSocketManager: @unchecked Sendable {
         playerID: String,
         displayName: String,
         send: @escaping @Sendable (String) -> Void
-    ) -> GameRoom? {
+    ) -> UUID? {
         queue.sync(flags: .barrier) {
             guard let room = self.rooms[roomCode] else { return nil }
+            let connectionID = UUID()
             room.state.questionerID = playerID
             room.state.questionerDisplayName = displayName
             room.questionerSend = send
-            
+            room.questionerConnectionID = connectionID
+
             // If questioner reconnects, cancel any pending cleanup
             self.cancelCleanupTimer(for: roomCode)
             print("✅ [\(roomCode)] Questioner connected/reconnected")
-            
-            return room
+            return connectionID
         }
     }
 
-    // MARK: - Graceful Disconnect (NEW - supports reconnection)
+    // MARK: - Graceful Disconnect (supports reconnection)
 
-    func disconnect(roomCode: String, role: PlayerRole) -> GameState? {
+    /// True while at least one HUMAN socket is attached. The AI's send closure
+    /// is a routing shim, not a socket — it must never count as "connected".
+    private func humanConnected(in room: GameRoom) -> Bool {
+        switch room.aiRole {
+        case .answerer:   return room.questionerSend != nil
+        case .questioner: return room.answererSend != nil
+        case nil:         return room.answererSend != nil || room.questionerSend != nil
+        }
+    }
+
+    func disconnect(roomCode: String, role: PlayerRole, connectionID: UUID? = nil) -> GameState? {
         queue.sync(flags: .barrier) {
             guard let room = self.rooms[roomCode] else { return nil }
-            
-            // Mark connection as inactive but DON'T remove the room yet
+
+            // Stale-socket guard: if a reconnect already replaced this side's
+            // connection, the old socket's close event must not null the new one.
             switch role {
             case .answerer:
+                if let connectionID, room.answererConnectionID != connectionID {
+                    print("🔌 [\(roomCode)] Stale answerer socket closed — newer connection active, ignoring")
+                    return room.state
+                }
                 room.answererSend = nil
+                room.answererConnectionID = nil
                 print("🔌 [\(roomCode)] Answerer disconnected (room kept alive)")
             case .questioner:
+                if let connectionID, room.questionerConnectionID != connectionID {
+                    print("🔌 [\(roomCode)] Stale questioner socket closed — newer connection active, ignoring")
+                    return room.state
+                }
                 room.questionerSend = nil
+                room.questionerConnectionID = nil
                 print("🔌 [\(roomCode)] Questioner disconnected (room kept alive)")
             }
-            
-            let bothDisconnected = room.answererSend == nil && room.questionerSend == nil
+
+            // For AI rooms the AI side never disconnects on its own, so room
+            // lifetime is driven purely by whether a human is still attached.
+            let roomEmpty = !self.humanConnected(in: room)
             let gameEnded = room.state.phase == .won || room.state.phase == .lost
-            
-            if bothDisconnected && gameEnded {
-                // Game is over and both players gone → immediate cleanup
-                print("🗑️ [\(roomCode)] Both players gone + game ended → immediate cleanup")
-                self.rooms.removeValue(forKey: roomCode)
-                self.aiPlayers.removeValue(forKey: roomCode)
-                self.cancelCleanupTimer(for: roomCode)
-            } else if bothDisconnected {
-                // Game is still active but both disconnected → schedule cleanup
-                print("⏰ [\(roomCode)] Both disconnected but game active → scheduling cleanup in \(Int(self.roomCleanupTimeout))s")
+
+            if roomEmpty && gameEnded {
+                // Game is over and every human is gone → immediate cleanup
+                print("🗑️ [\(roomCode)] Humans gone + game ended → immediate cleanup")
+                self.removeRoomLocked(roomCode)
+            } else if roomEmpty {
+                // Game still active but nobody human is here → grace window
+                print("⏰ [\(roomCode)] No humans connected but game active → scheduling cleanup in \(Int(self.roomCleanupTimeout))s")
                 self.scheduleCleanup(for: roomCode)
             } else {
-                // One player still connected → cancel any pending cleanup
+                // A human is still connected → cancel any pending cleanup
                 self.cancelCleanupTimer(for: roomCode)
             }
-            
+
             return room.state
         }
     }
 
-    // MARK: - Cleanup Timer Management (NEW)
+    // MARK: - Cleanup Timer Management
+
+    /// Must be called on the barrier queue.
+    private func removeRoomLocked(_ roomCode: String) {
+        self.rooms.removeValue(forKey: roomCode)
+        self.aiPlayers.removeValue(forKey: roomCode)
+        self.cancelCleanupTimer(for: roomCode)
+    }
 
     private func scheduleCleanup(for roomCode: String) {
         // Cancel any existing timer first
         cancelCleanupTimer(for: roomCode)
-        
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            
+
+        let timeout = roomCleanupTimeout
+        cleanupTimers[roomCode] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard let self, !Task.isCancelled else { return }
+
             self.queue.async(flags: .barrier) {
-                // Only cleanup if still disconnected
-                guard let room = self.rooms[roomCode],
-                      room.answererSend == nil,
-                      room.questionerSend == nil else {
+                // Only clean up if no human came back during the grace window
+                guard let room = self.rooms[roomCode], !self.humanConnected(in: room) else {
                     print("⏰ [\(roomCode)] Cleanup cancelled - player reconnected")
+                    self.cleanupTimers.removeValue(forKey: roomCode)
                     return
                 }
-                
+
                 print("🗑️ [\(roomCode)] Cleanup timeout reached → removing room")
-                self.rooms.removeValue(forKey: roomCode)
-                self.aiPlayers.removeValue(forKey: roomCode)
-                self.cleanupTimers.removeValue(forKey: roomCode)
+                self.removeRoomLocked(roomCode)
             }
         }
-        
-        cleanupTimers[roomCode] = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + roomCleanupTimeout, execute: workItem)
     }
 
     private func cancelCleanupTimer(for roomCode: String) {
@@ -173,21 +211,6 @@ final class WebSocketManager: @unchecked Sendable {
         queue.async(flags: .barrier) {
             guard let room = self.rooms[roomCode] else { return }
 
-            if raw.contains("\"dismissGame\"") {
-                let opponentLeft = GameEventEnvelope.opponentLeft()
-                switch role {
-                case .answerer:   room.sendToQuestioner(opponentLeft)
-                case .questioner: room.sendToAnswerer(opponentLeft)
-                }
-                room.answererSend = nil
-                room.questionerSend = nil
-                self.rooms.removeValue(forKey: roomCode)
-                self.aiPlayers.removeValue(forKey: roomCode)
-                self.cancelCleanupTimer(for: roomCode)
-                print("🗑️ [\(roomCode)] Game dismissed by player")
-                return
-            }
-
             guard
                 let data = raw.data(using: .utf8),
                 let action = try? JSONDecoder().decode(GameActionEnvelope.self, from: data)
@@ -197,6 +220,21 @@ final class WebSocketManager: @unchecked Sendable {
                 case .answerer:   room.sendToAnswerer(error)
                 case .questioner: room.sendToQuestioner(error)
                 }
+                return
+            }
+
+            // Explicit quit — decode-verified (the old raw substring check fired
+            // on ANY payload containing the literal "dismissGame").
+            if action.type == .dismissGame {
+                let opponentLeft = GameEventEnvelope.opponentLeft()
+                switch role {
+                case .answerer:   room.sendToQuestioner(opponentLeft)
+                case .questioner: room.sendToAnswerer(opponentLeft)
+                }
+                room.answererSend = nil
+                room.questionerSend = nil
+                self.removeRoomLocked(roomCode)
+                print("🗑️ [\(roomCode)] Game dismissed by player")
                 return
             }
 
@@ -221,25 +259,44 @@ final class WebSocketManager: @unchecked Sendable {
                     state: room.state
                 )
                 room.state = result.state
+                // A rematch puts the room back into play — the next game's
+                // terminal result must be writable again.
+                if result.state.phase == .playing || result.state.phase == .lobby {
+                    room.resultWritten = false
+                }
                 print("🎮 [\(roomCode)] engine processed \(action.type.rawValue) → phase: \(result.state.phase.rawValue)")
                 room.dispatch(result)
 
                 if result.closeConnections {
                     room.answererSend = nil
                     room.questionerSend = nil
-                    self.rooms.removeValue(forKey: roomCode)
-                    self.aiPlayers.removeValue(forKey: roomCode)
-                    self.cancelCleanupTimer(for: roomCode)
+                    self.removeRoomLocked(roomCode)
                     print("🗑️ [\(roomCode)] Game engine closed connections")
                 }
             } catch {
                 print("❌ [\(roomCode)] engine error for \(action.type.rawValue): \(error)")
-                let errorEvent = GameEventEnvelope.error(error.localizedDescription)
+                // EngineError's localizedDescription is the useless generic
+                // Foundation text — surface the real message instead.
+                let message = (error as? EngineError)?.description ?? error.localizedDescription
+                let errorEvent = GameEventEnvelope.error(message)
                 switch role {
                 case .answerer:   room.sendToAnswerer(errorEvent)
                 case .questioner: room.sendToQuestioner(errorEvent)
                 }
             }
+        }
+    }
+
+    // MARK: - Terminal result idempotency
+
+    /// Atomically claims the right to persist this room's terminal GameResult.
+    /// Returns true exactly once per finished game — extra messages observed in
+    /// the won/lost phase (the source of duplicate stat rows) return false.
+    func claimResultWrite(roomCode: String) -> Bool {
+        queue.sync(flags: .barrier) {
+            guard let room = self.rooms[roomCode], !room.resultWritten else { return false }
+            room.resultWritten = true
+            return true
         }
     }
 

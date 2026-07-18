@@ -8,6 +8,7 @@ enum EngineError: Error, CustomStringConvertible {
     case secretNotSet
     case questionAlreadyPending
     case noPendingQuestion
+    case invalidInput(String)
 
     var description: String {
         switch self {
@@ -21,6 +22,8 @@ enum EngineError: Error, CustomStringConvertible {
             return "Wait for the current question to be answered"
         case .noPendingQuestion:
             return "There is no pending question to answer"
+        case .invalidInput(let reason):
+            return reason
         }
     }
 }
@@ -112,8 +115,22 @@ struct GameEngine {
             throw EngineError.wrongPlayer
         }
 
+        // A secret must be real, guessable text: non-empty, bounded, and
+        // containing at least one letter (guess matching normalizes to a–z, so
+        // an all-digit/symbol secret would be literally unguessable).
+        let secret = payload.secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !secret.isEmpty else {
+            throw EngineError.invalidInput("Secret word cannot be empty")
+        }
+        guard secret.count <= 40 else {
+            throw EngineError.invalidInput("Secret word is too long (max 40 characters)")
+        }
+        guard secret.rangeOfCharacter(from: .letters) != nil else {
+            throw EngineError.invalidInput("Secret word must contain letters")
+        }
+
         var next = state
-        next.secret = payload.secret
+        next.secret = secret
 
         return EngineResult(
             state: next,
@@ -143,12 +160,20 @@ struct GameEngine {
             throw EngineError.questionAlreadyPending
         }
 
+        let question = payload.question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else {
+            throw EngineError.invalidInput("Question cannot be empty")
+        }
+        guard question.count <= 200 else {
+            throw EngineError.invalidInput("Question is too long (max 200 characters)")
+        }
+
         var next = state
 
         let qna = QnA(
             id: UUID(),
             questionNumber: next.questionsAsked.count + 1,
-            question: payload.question,
+            question: question,
             answer: nil
         )
 
@@ -215,6 +240,14 @@ struct GameEngine {
 
         guard let secret = state.secret else {
             throw EngineError.secretNotSet
+        }
+
+        let trimmedGuess = payload.guess.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedGuess.isEmpty else {
+            throw EngineError.invalidInput("Guess cannot be empty")
+        }
+        guard trimmedGuess.count <= 60 else {
+            throw EngineError.invalidInput("Guess is too long (max 60 characters)")
         }
 
         let guessNorm = payload.guess.lowercased()
@@ -411,6 +444,14 @@ struct GameEngine {
             return EngineResult(state: state)
         }
 
+        let hint = payload.hint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !hint.isEmpty else {
+            throw EngineError.invalidInput("Hint cannot be empty")
+        }
+        guard hint.count <= 200 else {
+            throw EngineError.invalidInput("Hint is too long (max 200 characters)")
+        }
+
         var next = state
         next.hintPending = false
 
@@ -418,7 +459,7 @@ struct GameEngine {
             state: next,
             toAnswerer: .stateSnapshot(next.answererView()),
             toQuestioner: .hintGiven(
-                hint: payload.hint,
+                hint: hint,
                 hintsRemaining: next.freeHintsRemaining
             )
         )

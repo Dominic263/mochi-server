@@ -2,6 +2,59 @@ import Vapor
 import Fluent
 import Logging
 
+// MARK: - AI game rate limiting
+//
+// Every AI game burns 20–40 OpenAI calls, and create-vs-ai used to be
+// completely unmetered — any client could farm unbounded spend on our API key.
+// In-memory per-player daily cap; resets at local midnight or on restart
+// (a restart granting a fresh allowance is acceptable).
+
+actor AIGameRateLimiter {
+    static let shared = AIGameRateLimiter()
+
+    private var dayStart = Date()
+    private var counts: [String: Int] = [:]
+
+    /// The client enforces 10/day in its UI; the server allows headroom above
+    /// that but still bounds a hostile client.
+    private let dailyLimit = 20
+
+    func allowGame(playerID: String) -> Bool {
+        if !Calendar.current.isDate(Date(), inSameDayAs: dayStart) {
+            counts = [:]
+            dayStart = Date()
+        }
+        let used = counts[playerID, default: 0]
+        guard used < dailyLimit else { return false }
+        counts[playerID] = used + 1
+        return true
+    }
+}
+
+// MARK: - Request field validation
+
+private func validatedPlayerID(_ raw: String) throws -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.count <= 64 else {
+        throw Abort(.badRequest, reason: "Invalid player id.")
+    }
+    return trimmed
+}
+
+private func sanitizedDisplayName(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let clipped = String(trimmed.prefix(30))
+    return clipped.isEmpty ? "Player" : clipped
+}
+
+private func normalizedRoomCode(_ raw: String) throws -> String {
+    let code = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    guard !code.isEmpty, code.count <= 16 else {
+        throw Abort(.badRequest, reason: "Invalid room code.")
+    }
+    return code
+}
+
 struct MiniGameController: RouteCollection {
 
     func boot(routes: any RoutesBuilder) throws {
@@ -106,14 +159,16 @@ struct MiniGameController: RouteCollection {
             let displayName: String
         }
         let body = try req.content.decode(Body.self)
+        let playerID    = try validatedPlayerID(body.playerID)
+        let displayName = sanitizedDisplayName(body.displayName)
 
         let roomCode = try await uniqueRoomCode(db: req.db)
-        let state    = GameState(roomCode: roomCode, answererID: body.playerID, answererDisplayName: body.displayName)
+        let state    = GameState(roomCode: roomCode, answererID: playerID, answererDisplayName: displayName)
 
         let session = GameSession(
             roomCode: roomCode,
             gameType: "twenty_questions",
-            answererID: body.playerID,
+            answererID: playerID,
             state: state
         )
         try await session.save(on: req.db)
@@ -124,10 +179,10 @@ struct MiniGameController: RouteCollection {
         PendingConnections.shared.add(
             token: token,
             connection: PendingConnection(
-                playerID: body.playerID,
+                playerID: playerID,
                 roomCode: roomCode,
                 role: .answerer,
-                displayName: body.displayName
+                displayName: displayName
             )
         )
 
@@ -143,16 +198,19 @@ struct MiniGameController: RouteCollection {
             let displayName: String
         }
         let body = try req.content.decode(Body.self)
+        let playerID    = try validatedPlayerID(body.playerID)
+        let displayName = sanitizedDisplayName(body.displayName)
+        let roomCode    = try normalizedRoomCode(body.roomCode)
 
         guard let session = try await GameSession.query(on: req.db)
-            .filter(\.$roomCode == body.roomCode)
+            .filter(\.$roomCode == roomCode)
             .filter(\.$phase    == GamePhase.lobby.rawValue)
             .first()
         else {
             throw Abort(.notFound, reason: "Room not found or game already in progress.")
         }
 
-        guard session.answererID != body.playerID else {
+        guard session.answererID != playerID else {
             throw Abort(.conflict, reason: "You created this room — share the code with your opponent.")
         }
 
@@ -160,10 +218,10 @@ struct MiniGameController: RouteCollection {
         PendingConnections.shared.add(
             token: token,
             connection: PendingConnection(
-                playerID: body.playerID,
-                roomCode: body.roomCode,
+                playerID: playerID,
+                roomCode: roomCode,
                 role: .questioner,
-                displayName: body.displayName
+                displayName: displayName
             )
         )
 
@@ -209,6 +267,12 @@ struct MiniGameController: RouteCollection {
             let aiRole: String
         }
         let body = try req.content.decode(Body.self)
+        let playerID    = try validatedPlayerID(body.playerID)
+        let displayName = sanitizedDisplayName(body.displayName)
+
+        guard await AIGameRateLimiter.shared.allowGame(playerID: playerID) else {
+            throw Abort(.tooManyRequests, reason: "Daily AI game limit reached. Try again tomorrow.")
+        }
 
         let aiRole: PlayerRole    = body.aiRole == "answerer" ? .answerer : .questioner
         let humanRole: PlayerRole = aiRole == .answerer ? .questioner : .answerer
@@ -217,8 +281,8 @@ struct MiniGameController: RouteCollection {
         let aiID     = UUID().uuidString
         let aiName   = AIPlayer.randomName()
 
-        let answererID:   String = aiRole == .answerer ? aiID          : body.playerID
-        let answererName: String = aiRole == .answerer ? aiName        : body.displayName
+        let answererID:   String = aiRole == .answerer ? aiID          : playerID
+        let answererName: String = aiRole == .answerer ? aiName        : displayName
 
         let state = GameState(
             roomCode: roomCode,
@@ -240,20 +304,23 @@ struct MiniGameController: RouteCollection {
         PendingConnections.shared.add(
             token: humanToken,
             connection: PendingConnection(
-                playerID: body.playerID,
+                playerID: playerID,
                 roomCode: roomCode,
                 role: humanRole,
-                displayName: body.displayName
+                displayName: displayName
             )
         )
 
         guard let openAIKey = Environment.get("OPENAI_API_KEY") else {
             throw Abort(.internalServerError, reason: "OpenAI key not configured on server.")
         }
-        let openAI = OpenAIClient(apiKey: openAIKey, client: req.client)
+        // Use the application-scoped HTTP client: the AI actor outlives this
+        // request by minutes, and a request-scoped client is not safe to hold
+        // past the request's lifetime.
+        let app    = req.application
+        let openAI = OpenAIClient(apiKey: openAIKey, client: app.client)
         let ai     = AIPlayer(playerID: aiID, roomCode: roomCode, role: aiRole, openAI: openAI)
 
-        let app = req.application
         Task { await ai.start(on: app) }
 
         req.logger.info("🤖 AI game created: \(roomCode), AI role: \(aiRole.rawValue)")
@@ -284,21 +351,26 @@ struct MiniGameController: RouteCollection {
             ws.send(message, promise: nil)
         }
 
+        // Connection generation id — lets the close handler for THIS socket
+        // no-op if a reconnect has already replaced it (stale-close race).
+        var connectionID: UUID?
+
         switch role {
 
         case .answerer:
-            WebSocketManager.shared.connectAnswerer(roomCode: roomCode, send: sendClosure)
+            connectionID = WebSocketManager.shared.connectAnswerer(roomCode: roomCode, send: sendClosure)
             if let state = WebSocketManager.shared.currentState(for: roomCode) {
                 sendClosure(GameEventEnvelope.stateSnapshot(state.answererView()).toJSON())
             }
 
         case .questioner:
-            if WebSocketManager.shared.connectQuestioner(
+            connectionID = WebSocketManager.shared.connectQuestioner(
                 roomCode: roomCode,
                 playerID: playerID,
                 displayName: displayName,
                 send: sendClosure
-            ) != nil {
+            )
+            if connectionID != nil {
 
                 if isReconnect {
                     // Reconnecting questioner: the answerer never left, so DON'T
@@ -309,10 +381,12 @@ struct MiniGameController: RouteCollection {
                         sendClosure(GameEventEnvelope.stateSnapshot(freshState.questionerView()).toJSON())
                     }
                 } else {
-                    // First-time join: original behavior. The 0.5s delay gives the
-                    // answerer's side a beat before the snapshot, and we notify the
-                    // answerer that the opponent has arrived.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    // First-time join: the 0.5s delay gives the answerer's side a
+                    // beat before the snapshot, and we notify the answerer that
+                    // the opponent has arrived. (Task.sleep, NOT the main dispatch
+                    // queue — that queue is never serviced under Vapor/NIO.)
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(500))
                         if let freshState = WebSocketManager.shared.currentState(for: roomCode) {
                             sendClosure(GameEventEnvelope.stateSnapshot(freshState.questionerView()).toJSON())
                         }
@@ -343,6 +417,9 @@ struct MiniGameController: RouteCollection {
             }
         }
 
+        // Immutable copy for the Sendable close handler below.
+        let socketConnectionID = connectionID
+
         ws.onText { _, text in
             logger.info("📨 [\(roomCode)] received: \(text.prefix(100))")
             WebSocketManager.shared.handle(
@@ -369,6 +446,11 @@ struct MiniGameController: RouteCollection {
                         let questionerID = state.questionerID,
                         let secret       = state.secret
                     else { return }
+
+                    // Idempotency: every message observed in the won/lost phase
+                    // used to write ANOTHER GameResult row, inflating stats.
+                    // claimResultWrite returns true exactly once per finished game.
+                    guard WebSocketManager.shared.claimResultWrite(roomCode: roomCode) else { return }
 
                     // Write the immutable result, resolving each human side to its
                     // account (S3). Done in an async helper so the device→account
@@ -408,7 +490,7 @@ struct MiniGameController: RouteCollection {
             //   • closeBothConnections → calls removeAI
             // so this is not a leak; it only stops a RECOVERABLE drop from killing it.
 
-            if let state = WebSocketManager.shared.disconnect(roomCode: roomCode, role: role) {
+            if let state = WebSocketManager.shared.disconnect(roomCode: roomCode, role: role, connectionID: socketConnectionID) {
                 db.query(GameSession.self)
                     .filter(\.$roomCode == roomCode)
                     .first()

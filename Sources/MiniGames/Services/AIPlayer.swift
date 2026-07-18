@@ -682,18 +682,29 @@ enum AIEvent {
 // but the switch must be exhaustive since DecodedPayload now includes that case.
 
 extension GameActionEnvelope {
+    /// Serialize a GPT-derived string as a JSON string literal (quotes included).
+    /// The old hand-concatenation only escaped `"` — a backslash, newline, or
+    /// control character in model output produced invalid JSON and the action
+    /// was silently dropped on decode.
+    private static func jsonLiteral(_ value: String) -> String {
+        guard
+            let data = try? JSONEncoder().encode([value]),
+            let array = String(data: data, encoding: .utf8)
+        else { return "\"\"" }
+        // Encoded as a one-element array — strip the brackets to get the literal.
+        return String(array.dropFirst().dropLast())
+    }
+
     static func encoded(_ payload: DecodedPayload) -> String {
         switch payload {
         case .setSecret(let p):
-            return #"{"type":"setSecret","payload":{"secret":"\#(p.secret)"}}"#
+            return #"{"type":"setSecret","payload":{"secret":\#(jsonLiteral(p.secret))}}"#
         case .askQuestion(let p):
-            let e = p.question.replacingOccurrences(of: "\"", with: "\\\"")
-            return #"{"type":"askQuestion","payload":{"question":"\#(e)"}}"#
+            return #"{"type":"askQuestion","payload":{"question":\#(jsonLiteral(p.question))}}"#
         case .answerQuestion(let p):
             return #"{"type":"answerQuestion","payload":{"answer":\#(p.answer)}}"#
         case .makeGuess(let p):
-            let e = p.guess.replacingOccurrences(of: "\"", with: "\\\"")
-            return #"{"type":"makeGuess","payload":{"guess":"\#(e)"}}"#
+            return #"{"type":"makeGuess","payload":{"guess":\#(jsonLiteral(p.guess))}}"#
         case .requestRestart:      return #"{"type":"requestRestart","payload":{}}"#
         case .confirmRestart:      return #"{"type":"confirmRestart","payload":{}}"#
         case .startGame:           return #"{"type":"startGame","payload":{}}"#
@@ -701,8 +712,7 @@ extension GameActionEnvelope {
         case .requestHint:         return #"{"type":"requestHint","payload":{}}"#
         case .requestRewardedHint: return #"{"type":"requestRewardedHint","payload":{}}"#
         case .provideHint(let p):
-            let e = p.hint.replacingOccurrences(of: "\"", with: "\\\"")
-            return #"{"type":"provideHint","payload":{"hint":"\#(e)"}}"#
+            return #"{"type":"provideHint","payload":{"hint":\#(jsonLiteral(p.hint))}}"#
         }
     }
 }
