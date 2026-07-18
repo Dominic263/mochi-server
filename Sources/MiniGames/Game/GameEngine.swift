@@ -472,7 +472,7 @@ struct GameEngine {
         state: GameState
     ) throws -> EngineResult {
         guard state.phase == .won || state.phase == .lost || state.phase == .waitingForRematch else {
-            throw EngineError.wrongPhase(expected: .won, actual: state.phase)
+            throw EngineError.invalidInput("You can only request a rematch after the game ends")
         }
 
         var next = state

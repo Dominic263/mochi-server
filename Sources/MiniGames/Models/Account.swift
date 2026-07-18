@@ -46,6 +46,11 @@ final class Account: Model, Content, @unchecked Sendable {
     @Field(key: "session_token")
     var sessionToken: String
 
+    /// Shareable 6-char friend code (e.g. "K7PM3X"). Null until backfilled
+    /// lazily the first time the account hits GET /friends. Unique when present.
+    @OptionalField(key: "friend_code")
+    var friendCode: String?
+
     /// One account has many devices (installs). See Device.
     @Children(for: \.$account)
     var devices: [Device]
@@ -70,6 +75,7 @@ final class Account: Model, Content, @unchecked Sendable {
         self.appleUserID = nil
         self.appleEmail = nil
         self.sessionToken = sessionToken
+        self.friendCode = nil
     }
 }
 

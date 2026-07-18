@@ -38,6 +38,9 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateGameResult())
     app.migrations.add(CreateAccount())              // S1 — accounts + devices
     app.migrations.add(AddAccountsToGameResult())    // S3 — account-stamped results
+    app.migrations.add(AddFriendCodeToAccount())     // Friends — shareable friend codes
+    app.migrations.add(CreateFriendship())           // Friends — friendships table
+    app.migrations.add(CreateFriendChallenge())      // Friends — challenge pointers
     try await app.autoMigrate()
 
     // MARK: - Leaf (server-side HTML templating for the marketing site)
