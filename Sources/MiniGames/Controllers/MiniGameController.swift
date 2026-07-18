@@ -100,11 +100,20 @@ struct MiniGameController: RouteCollection {
             throw Abort(.internalServerError, reason: "Could not load game state.")
         }
 
-        // Cross-check the live, in-memory room. If the cleanup timer already
-        // reaped it, the game is gone even though the DB row lingers.
-        guard WebSocketManager.shared.isRoomReconnectable(roomCode: state.roomCode) else {
-            req.logger.info("⌛ Reconnect denied for \(state.roomCode): no live room (expired).")
-            throw Abort(.notFound, reason: "This game has expired.")
+        // Cross-check the live, in-memory room. Two ways it can be missing:
+        //   • the cleanup timer reaped it (both players gone > grace window) —
+        //     genuinely expired, reject;
+        //   • the SERVER restarted — the DB row is fine and the game is
+        //     recoverable, so rehydrate the room from the persisted state.
+        // AI games can't be rehydrated (the AI actor's in-memory reasoning is
+        // gone), so those stay expired.
+        if !WebSocketManager.shared.isRoomReconnectable(roomCode: state.roomCode) {
+            let wasReaped = WebSocketManager.shared.wasRecentlyCleaned(roomCode: state.roomCode)
+            if session.gameType == "twenty_questions_ai" || wasReaped {
+                req.logger.info("⌛ Reconnect denied for \(state.roomCode): expired (aiGame=\(session.gameType == "twenty_questions_ai"), reaped=\(wasReaped)).")
+                throw Abort(.notFound, reason: "This game has expired.")
+            }
+            WebSocketManager.shared.ensureRoom(state: state)
         }
 
         // Determine player's role
@@ -228,36 +237,6 @@ struct MiniGameController: RouteCollection {
         return JoinGameResponse(token: token)
     }
 
-    // MARK: - POST /game/rematch
-
-    func rematch(req: Request) async throws -> RematchResponse {
-        struct Body: Content {
-            let playerID: String
-            let roomCode: String
-            let displayName: String
-        }
-        let body = try req.content.decode(Body.self)
-
-        guard let state = WebSocketManager.shared.currentState(for: body.roomCode) else {
-            throw Abort(.notFound, reason: "Room not found.")
-        }
-
-        let role: PlayerRole = body.playerID == state.answererID ? .answerer : .questioner
-
-        let token = UUID().uuidString
-        PendingConnections.shared.add(
-            token: token,
-            connection: PendingConnection(
-                playerID: body.playerID,
-                roomCode: body.roomCode,
-                role: role,
-                displayName: body.displayName
-            )
-        )
-
-        return RematchResponse(token: token, roomCode: body.roomCode)
-    }
-
     // MARK: - POST /game/create-vs-ai
 
     func createGameVsAI(req: Request) async throws -> CreateGameResponse {
@@ -292,7 +271,10 @@ struct MiniGameController: RouteCollection {
 
         let session = GameSession(
             roomCode: roomCode,
-            gameType: "twenty_questions",
+            // Distinct type so reconnect knows this room can't be rehydrated
+            // after a restart (the AI actor's reasoning state dies with the
+            // process).
+            gameType: "twenty_questions_ai",
             answererID: answererID,
             state: state
         )
@@ -578,11 +560,6 @@ struct CreateGameResponse: Content {
 
 struct JoinGameResponse: Content {
     let token: String
-}
-
-struct RematchResponse: Content {
-    let token: String
-    let roomCode: String
 }
 
 struct ReconnectResponse: Content {

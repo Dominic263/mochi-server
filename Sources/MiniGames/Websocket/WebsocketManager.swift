@@ -13,6 +13,11 @@ final class WebSocketManager: @unchecked Sendable {
     // Vapor/NIO process (the main thread is parked in app.execute()) — those
     // work items never fired and rooms leaked forever.
     private var cleanupTimers: [String: Task<Void, Never>] = [:]
+    // Rooms deliberately torn down (dismissed, grace window expired, game
+    // ended). Reconnect must NOT rehydrate these from the DB — the teardown was
+    // intentional. In-memory only: a server restart clears it, which is fine
+    // because restart-recovery is exactly the case rehydration exists for.
+    private var cleanedRooms: [String: Date] = [:]
     private let queue = DispatchQueue(label: "com.minigames.wsmanager", attributes: .concurrent)
 
     // Configuration
@@ -45,6 +50,20 @@ final class WebSocketManager: @unchecked Sendable {
     func createRoom(state: GameState) {
         queue.async(flags: .barrier) {
             self.rooms[state.roomCode] = GameRoom(state: state)
+        }
+    }
+
+    /// Rehydrate a room from a persisted GameState (server restarted while the
+    /// game was live). No-op if a live room already exists. Returns true if a
+    /// live room exists after the call.
+    @discardableResult
+    func ensureRoom(state: GameState) -> Bool {
+        queue.sync(flags: .barrier) {
+            if self.rooms[state.roomCode] == nil {
+                print("💧 [\(state.roomCode)] Rehydrating room from persisted state (phase: \(state.phase.rawValue))")
+                self.rooms[state.roomCode] = GameRoom(state: state)
+            }
+            return true
         }
     }
 
@@ -161,6 +180,17 @@ final class WebSocketManager: @unchecked Sendable {
         self.rooms.removeValue(forKey: roomCode)
         self.aiPlayers.removeValue(forKey: roomCode)
         self.cancelCleanupTimer(for: roomCode)
+        self.cleanedRooms[roomCode] = Date()
+        // Bounded: prune ledger entries older than a day.
+        if self.cleanedRooms.count > 1000 {
+            let cutoff = Date().addingTimeInterval(-86_400)
+            self.cleanedRooms = self.cleanedRooms.filter { $0.value > cutoff }
+        }
+    }
+
+    /// True if this room was deliberately torn down this process lifetime.
+    func wasRecentlyCleaned(roomCode: String) -> Bool {
+        queue.sync { cleanedRooms[roomCode] != nil }
     }
 
     private func scheduleCleanup(for roomCode: String) {
