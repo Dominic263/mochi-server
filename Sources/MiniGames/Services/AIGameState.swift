@@ -12,6 +12,9 @@ import Foundation
 
 struct AIGameState {
 
+    /// Tunes how aggressively the AI converges (see AIDifficulty).
+    var difficulty: AIDifficulty = .medium
+
     // MARK: - Turn record
 
     struct Turn {
@@ -210,22 +213,57 @@ struct AIGameState {
     // MARK: - Decision helpers
 
     func shouldGuessNow(questionsRemaining: Int) -> Bool {
-        // Specific thing confirmed — guess immediately regardless of anything else
+        // Specific thing confirmed — guess immediately regardless of tier
         if specificThingConfirmed { return true }
         if questionsRemaining <= 2 { return true }
-        if estimatedCandidates <= 2 { return true }
-        if questionsRemaining <= 5 && estimatedCandidates <= 5 { return true }
-        if estimatedCandidates <= 8 && confirmedTraits.count >= 4 { return true }
-        if !hintsReceived.isEmpty && estimatedCandidates <= 15 { return true }
-        return false
+
+        switch difficulty {
+        case .easy:
+            // Dawdles: only guesses on a near-certainty, so it routinely runs
+            // out of questions on anything non-obvious.
+            return estimatedCandidates <= 1
+
+        case .medium:
+            if estimatedCandidates <= 2 { return true }
+            if questionsRemaining <= 5 && estimatedCandidates <= 5 { return true }
+            if estimatedCandidates <= 8 && confirmedTraits.count >= 4 { return true }
+            if !hintsReceived.isEmpty && estimatedCandidates <= 15 { return true }
+            return false
+
+        case .hard:
+            // Converges early and trusts its narrowing.
+            if estimatedCandidates <= 3 { return true }
+            if questionsRemaining <= 6 && estimatedCandidates <= 6 { return true }
+            if estimatedCandidates <= 10 && confirmedTraits.count >= 4 { return true }
+            if !hintsReceived.isEmpty && estimatedCandidates <= 20 { return true }
+            return false
+        }
     }
 
     func shouldRequestHint(questionsRemaining: Int) -> Bool {
+        guard difficulty.usesHints else { return false }
         let used = 20 - questionsRemaining
-        guard hintsReceived.count < 2 else { return false }
-        if used >= 10 && hintsReceived.isEmpty && estimatedCandidates > 30 { return true }
-        if used >= 15 && hintsReceived.count == 1 && estimatedCandidates > 10 { return true }
-        return false
+
+        switch difficulty {
+        case .easy:
+            return false
+
+        case .medium:
+            guard hintsReceived.count < 2 else { return false }
+            if used >= 10 && hintsReceived.isEmpty && estimatedCandidates > 30 { return true }
+            if used >= 15 && hintsReceived.count == 1 && estimatedCandidates > 10 { return true }
+            return false
+
+        case .hard:
+            // Exploits every edge available: takes hints as soon as they
+            // unlock (server allows them after 10 questions) whenever the
+            // space is still meaningfully open.
+            guard hintsReceived.count < 3 else { return false }
+            if used >= 10 && hintsReceived.isEmpty && estimatedCandidates > 15 { return true }
+            if used >= 13 && hintsReceived.count == 1 && estimatedCandidates > 8 { return true }
+            if used >= 16 && hintsReceived.count == 2 && estimatedCandidates > 5 { return true }
+            return false
+        }
     }
 
     // MARK: - Prompt context block

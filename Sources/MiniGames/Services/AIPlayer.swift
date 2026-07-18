@@ -9,6 +9,7 @@ actor AIPlayer {
     nonisolated let roomCode: String
     nonisolated let role:     PlayerRole
     nonisolated let openAI:   OpenAIClient
+    nonisolated let difficulty: AIDifficulty
 
     // Answerer state
     private var secret: String?
@@ -23,11 +24,19 @@ actor AIPlayer {
     private var hintRequestInFlight = false
     private var eventContinuation:   AsyncStream<AIEventWrapper>.Continuation?
 
-    init(playerID: String, roomCode: String, role: PlayerRole, openAI: OpenAIClient) {
+    init(
+        playerID: String,
+        roomCode: String,
+        role: PlayerRole,
+        openAI: OpenAIClient,
+        difficulty: AIDifficulty = .medium
+    ) {
         self.playerID = playerID
         self.roomCode = roomCode
         self.role     = role
         self.openAI   = openAI
+        self.difficulty = difficulty
+        self.gameState.difficulty = difficulty
     }
 
     // MARK: - Entry point
@@ -196,9 +205,7 @@ actor AIPlayer {
             STRATEGY:
             - The secret could be ANYTHING: an object, body part, material, concept,
               natural phenomenon, food, place, animal, feeling — keep an open mind
-            - Choose the question that eliminates the MOST remaining possibilities
-            - Aim for a question where yes and no are roughly equally likely (~50/50 split)
-            - Do NOT ask about anything already in CONFIRMED or RULED OUT above
+            \(difficulty.questionStrategy)
             - Do NOT repeat any question from the history
             - With ~\(gameState.estimatedCandidates) possibilities remaining and
               \(remaining) questions left, \(remaining <= 8 ? "start narrowing aggressively" : "keep it broad")
@@ -221,7 +228,7 @@ actor AIPlayer {
                 system: system,
                 messages: [],
                 maxTokens: 35,
-                temperature: 0.5
+                temperature: difficulty.questionTemperature
             )
 
             let question = raw
@@ -233,7 +240,7 @@ actor AIPlayer {
             }
             let finalQuestion = alreadyAsked ? fallbackQuestion() : question
 
-            app.logger.info("🤖 \(aiName) asking: \(finalQuestion)")
+            app.logger.info("🤖 \(aiName) [\(difficulty.rawValue)] asking: \(finalQuestion)")
             sendAction(GameActionEnvelope.encoded(
                 .askQuestion(AskQuestionPayload(question: finalQuestion))
             ), app: app)
@@ -273,7 +280,7 @@ actor AIPlayer {
                 system: system,
                 messages: [],
                 maxTokens: 10,
-                temperature: 0.2
+                temperature: difficulty.guessTemperature
             )
 
             let guess = raw
@@ -302,28 +309,49 @@ actor AIPlayer {
     private func answerQuestion(question: String, app: Application) async {
         guard let secret else { return }
 
-        do {
-            WebSocketManager.shared.sendToQuestioner(in: roomCode, event: .typingIndicator())
-            try? await Task.sleep(for: .milliseconds(Int(Double.random(in: 0.6...1.6) * 1000)))
+        WebSocketManager.shared.sendToQuestioner(in: roomCode, event: .typingIndicator())
+        try? await Task.sleep(for: .milliseconds(Int(Double.random(in: 0.6...1.6) * 1000)))
 
-            let response = try await openAI.chat(
-                system: "You are playing 20 Questions. You know the secret. Answer only Yes or No.",
-                messages: [OpenAIClient.Message(role: "user",
-                    content: "Secret: \"\(secret)\"\nQuestion: \"\(question)\"\nAnswer Yes or No only.")],
-                maxTokens: 5,
-                temperature: 0.1
-            )
+        // CONSISTENCY: include the full prior Q&A so the model can't contradict
+        // its earlier answers about the same secret.
+        let history = (WebSocketManager.shared.currentState(for: roomCode)?.questionsAsked ?? [])
+            .compactMap { q -> String? in
+                guard let a = q.answer else { return nil }
+                return "Q: \(q.question) → \(a)"
+            }
+            .joined(separator: "\n")
 
-            let isYes = response.lowercased().hasPrefix("yes")
-            sendAction(GameActionEnvelope.encoded(
-                .answerQuestion(AnswerQuestionPayload(answer: isYes))
-            ), app: app)
+        let userContent = """
+            Secret: "\(secret)"
+            \(history.isEmpty ? "" : "Previous answers you already gave (STAY CONSISTENT with these):\n\(history)\n")
+            New question: "\(question)"
+            Answer Yes or No only.
+            """
 
-        } catch {
-            sendAction(GameActionEnvelope.encoded(
-                .answerQuestion(AnswerQuestionPayload(answer: false))
-            ), app: app)
+        // One retry before falling back — a transient API blip used to silently
+        // answer "No" and could make the game unwinnable.
+        for attempt in 0..<2 {
+            do {
+                let response = try await openAI.chat(
+                    system: "You are playing 20 Questions. You know the secret. Answer factually and consistently with your previous answers. Answer only Yes or No.",
+                    messages: [OpenAIClient.Message(role: "user", content: userContent)],
+                    maxTokens: 5,
+                    temperature: 0.1
+                )
+                let isYes = response.lowercased().hasPrefix("yes")
+                sendAction(GameActionEnvelope.encoded(
+                    .answerQuestion(AnswerQuestionPayload(answer: isYes))
+                ), app: app)
+                return
+            } catch {
+                app.logger.warning("🤖 answerQuestion attempt \(attempt + 1) failed: \(error)")
+                try? await Task.sleep(for: .milliseconds(600))
+            }
         }
+        // Both attempts failed — last-resort fallback.
+        sendAction(GameActionEnvelope.encoded(
+            .answerQuestion(AnswerQuestionPayload(answer: false))
+        ), app: app)
     }
 
     // MARK: - Generate hint (answerer role)
@@ -340,9 +368,9 @@ actor AIPlayer {
 
         do {
             let hint = try await openAI.chat(
-                system: "You are playing 20 Questions. Give one subtle indirect clue. Never reveal the category. One sentence.",
+                system: "You are playing 20 Questions as the answerer. \(difficulty.hintStyle)",
                 messages: [OpenAIClient.Message(role: "user",
-                    content: "Secret: \"\(secret)\"\nHistory:\n\(history)\nGive one subtle hint.")],
+                    content: "Secret: \"\(secret)\"\nHistory:\n\(history)\nGive one hint in your style.")],
                 maxTokens: 60
             )
             sendAction(GameActionEnvelope.encoded(
@@ -358,6 +386,12 @@ actor AIPlayer {
     // MARK: - Pick a secret
 
     private func pickSecret(app: Application) async -> String {
+        // Easy always defends an everyday word from the curated pool — no GPT
+        // call needed, and the pool is guaranteed guessable.
+        guard let instruction = difficulty.secretPickInstruction else {
+            return difficulty.staticSecretPool.randomElement() ?? "Dog"
+        }
+
         let categories = [
             "a household appliance", "a sport", "a vehicle", "a musical instrument",
             "a hand tool", "a wild animal", "a type of building", "a board game",
@@ -367,7 +401,7 @@ actor AIPlayer {
 
         do {
             let r = try await openAI.chat(
-                system: "Give ONE well-known single-word example. One word only — no spaces.\nGood: Piano, Telescope, Volcano\nBad: Tennis Ball, Lake Superior",
+                system: instruction,
                 messages: [OpenAIClient.Message(role: "user",
                     content: "Single-word example of: \(category)")],
                 maxTokens: 10,
@@ -376,9 +410,7 @@ actor AIPlayer {
             return r.trimmingCharacters(in: .whitespacesAndNewlines)
                 .split(separator: " ").first.map(String.init) ?? r
         } catch {
-            return ["Piano", "Volcano", "Submarine", "Telescope", "Bicycle",
-                    "Compass", "Lighthouse", "Hammer", "Glacier", "Drumkit"]
-                .randomElement() ?? "Piano"
+            return difficulty.staticSecretPool.randomElement() ?? "Piano"
         }
     }
 

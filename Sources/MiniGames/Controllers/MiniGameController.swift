@@ -244,10 +244,13 @@ struct MiniGameController: RouteCollection {
             let playerID: String
             let displayName: String
             let aiRole: String
+            // Optional so shipped clients (which don't send it) keep working.
+            let difficulty: String?
         }
         let body = try req.content.decode(Body.self)
         let playerID    = try validatedPlayerID(body.playerID)
         let displayName = sanitizedDisplayName(body.displayName)
+        let difficulty  = body.difficulty.flatMap(AIDifficulty.init(rawValue:)) ?? .medium
 
         guard await AIGameRateLimiter.shared.allowGame(playerID: playerID) else {
             throw Abort(.tooManyRequests, reason: "Daily AI game limit reached. Try again tomorrow.")
@@ -301,11 +304,17 @@ struct MiniGameController: RouteCollection {
         // past the request's lifetime.
         let app    = req.application
         let openAI = OpenAIClient(apiKey: openAIKey, client: app.client)
-        let ai     = AIPlayer(playerID: aiID, roomCode: roomCode, role: aiRole, openAI: openAI)
+        let ai     = AIPlayer(
+            playerID: aiID,
+            roomCode: roomCode,
+            role: aiRole,
+            openAI: openAI,
+            difficulty: difficulty
+        )
 
         Task { await ai.start(on: app) }
 
-        req.logger.info("🤖 AI game created: \(roomCode), AI role: \(aiRole.rawValue)")
+        req.logger.info("🤖 AI game created: \(roomCode), AI role: \(aiRole.rawValue), difficulty: \(difficulty.rawValue)")
         return CreateGameResponse(roomCode: roomCode, token: humanToken)
     }
 
