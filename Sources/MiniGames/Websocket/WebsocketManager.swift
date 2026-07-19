@@ -58,7 +58,7 @@ final class WebSocketManager: @unchecked Sendable {
             // ── Match clock: questioner ran out of time → answerer wins ──
             if let deadline = room.state.matchDeadline, deadline < now {
                 room.state.phase = .lost
-                room.broadcast(.error("⏱ Time's up — the 20-minute match clock ran out!"))
+                room.broadcast(.error("Time's up — the 20-minute match clock ran out!"))
                 room.broadcast(.gameLost(secret: room.state.secret ?? ""))
                 print("⏱ [\(code)] Match clock expired → questioner loses")
                 persistState?(code, room.state)
@@ -83,14 +83,14 @@ final class WebSocketManager: @unchecked Sendable {
                 room.state.questionsRemaining -= 1
                 if room.state.questionsRemaining <= 0 {
                     room.state.phase = .lost
-                    room.broadcast(.error("⏱ Time's up — no questions left!"))
+                    room.broadcast(.error("Time's up — no questions left!"))
                     room.broadcast(.gameLost(secret: room.state.secret ?? ""))
                     print("⏱ [\(code)] Questioner timed out with no questions left → lost")
                 } else {
                     room.state.turnDeadline = now.addingTimeInterval(GameEngine.turnLimitSeconds)
                     room.sendToAnswerer(.stateSnapshot(room.state.answererView()))
                     room.sendToQuestioner(.stateSnapshot(room.state.questionerView()))
-                    room.broadcast(.error("⏱ Time's up — that cost a question"))
+                    room.broadcast(.error("Time's up — that cost a question"))
                     print("⏱ [\(code)] Questioner timeout → question burned (\(room.state.questionsRemaining) left)")
                 }
                 persistState?(code, room.state)
@@ -101,7 +101,7 @@ final class WebSocketManager: @unchecked Sendable {
                 room.state.answererStrikes = strikes
                 if strikes >= 3 {
                     room.state.phase = .won
-                    room.broadcast(.error("⏱ \(room.state.answererDisplayName) took too long and forfeits the game"))
+                    room.broadcast(.error("\(room.state.answererDisplayName) took too long and forfeits the game"))
                     room.broadcast(.gameWon(
                         secret: room.state.secret ?? "",
                         questionsUsed: 20 - room.state.questionsRemaining
@@ -109,7 +109,7 @@ final class WebSocketManager: @unchecked Sendable {
                     print("⏱ [\(code)] Answerer forfeited on strike 3")
                 } else {
                     room.state.turnDeadline = now.addingTimeInterval(GameEngine.turnLimitSeconds)
-                    room.broadcast(.error("⏱ \(room.state.answererDisplayName) took too long — strike \(strikes) of 3"))
+                    room.broadcast(.error("\(room.state.answererDisplayName) took too long — strike \(strikes) of 3"))
                     print("⏱ [\(code)] Answerer strike \(strikes) of 3")
                 }
                 persistState?(code, room.state)

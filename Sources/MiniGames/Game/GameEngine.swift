@@ -144,7 +144,7 @@ struct GameEngine {
             state: next,
             toAnswerer: .stateSnapshot(next.answererView()),
             toQuestioner: .stateSnapshot(next.questionerView()),
-            toBoth: .error("⏰ 5 minutes added to the match clock!")
+            toBoth: .error("5 minutes added to the match clock!")
         )
     }
 
