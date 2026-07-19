@@ -310,7 +310,9 @@ actor AIPlayer {
         guard let secret else { return }
 
         WebSocketManager.shared.sendToQuestioner(in: roomCode, event: .typingIndicator())
-        try? await Task.sleep(for: .milliseconds(Int(Double.random(in: 0.6...1.6) * 1000)))
+        // Human-feeling variance: quick snap answers sometimes, a thoughtful
+        // pause other times — never a fixed beat.
+        try? await Task.sleep(for: .milliseconds(Int(Double.random(in: 1.5...4.0) * 1000)))
 
         // CONSISTENCY: include the full prior Q&A so the model can't contradict
         // its earlier answers about the same secret.

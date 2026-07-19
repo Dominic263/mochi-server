@@ -63,6 +63,68 @@ struct MiniGameController: RouteCollection {
         game.post("join",         use: joinGame)
         game.post("create-vs-ai", use: createGameVsAI)
         game.post("reconnect",    use: reconnect)
+        game.post("suggestions",  use: suggestions)
+    }
+
+    // MARK: - POST /game/suggestions
+    // AI-generated question ideas for the QUESTIONER, based on the live game's
+    // actual Q&A history. Capped per room so the button can't farm GPT calls.
+
+    func suggestions(req: Request) async throws -> SuggestionsResponse {
+        struct Body: Content {
+            let roomCode: String
+            let playerID: String
+        }
+        let body     = try req.content.decode(Body.self)
+        let playerID = try validatedPlayerID(body.playerID)
+        let roomCode = try normalizedRoomCode(body.roomCode)
+
+        guard let state = WebSocketManager.shared.currentState(for: roomCode) else {
+            throw Abort(.notFound, reason: "Game not found.")
+        }
+        guard state.questionerID == playerID else {
+            throw Abort(.forbidden, reason: "Only the questioner can request suggestions.")
+        }
+        guard await SuggestionRateLimiter.shared.allow(roomCode: roomCode) else {
+            throw Abort(.tooManyRequests, reason: "No more AI suggestions this game.")
+        }
+        guard let openAIKey = Environment.get("OPENAI_API_KEY") else {
+            throw Abort(.internalServerError, reason: "Suggestions unavailable.")
+        }
+
+        let history = state.questionsAsked
+            .map { q -> String in
+                let label = q.question.lowercased().hasPrefix("guess:") ? "GUESS" : "Q\(q.questionNumber)"
+                return "\(label): \(q.question) → \(q.answer ?? "pending")"
+            }
+            .joined(separator: "\n")
+
+        let openAI = OpenAIClient(apiKey: openAIKey, client: req.application.client)
+        let raw = try await openAI.chat(
+            system: """
+                You help a 20 Questions player choose their next yes/no question.
+                Given the game so far, propose exactly 3 SHORT yes/no questions that
+                each narrow the space efficiently, are consistent with every answer
+                so far, and repeat nothing already asked. One per line, no numbering,
+                no commentary — just the three questions.
+                """,
+            messages: [OpenAIClient.Message(role: "user", content: """
+                Questions remaining: \(state.questionsRemaining)
+                Game so far:
+                \(history.isEmpty ? "(no questions yet)" : history)
+                """)],
+            maxTokens: 90,
+            temperature: 0.8
+        )
+
+        let questions = raw
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "-•1234567890. ")) }
+            .filter { !$0.isEmpty }
+            .prefix(3)
+
+        return SuggestionsResponse(questions: Array(questions))
     }
 
     // MARK: - POST /game/reconnect
@@ -565,6 +627,26 @@ struct MiniGameController: RouteCollection {
 struct CreateGameResponse: Content {
     let roomCode: String
     let token: String
+}
+
+struct SuggestionsResponse: Content {
+    let questions: [String]
+}
+
+/// Caps AI-suggestion GPT calls per room (the client offers a couple of free
+/// regenerations, then gates behind a rewarded ad — this is the hard backstop).
+actor SuggestionRateLimiter {
+    static let shared = SuggestionRateLimiter()
+    private var counts: [String: Int] = [:]
+    private let perGameLimit = 8
+
+    func allow(roomCode: String) -> Bool {
+        let used = counts[roomCode, default: 0]
+        guard used < perGameLimit else { return false }
+        counts[roomCode] = used + 1
+        if counts.count > 2000 { counts = [:] }   // bounded memory
+        return true
+    }
 }
 
 struct JoinGameResponse: Content {
