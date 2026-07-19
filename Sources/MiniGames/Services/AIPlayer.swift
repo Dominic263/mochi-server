@@ -743,6 +743,7 @@ extension GameActionEnvelope {
         case .dismissGame:         return #"{"type":"dismissGame","payload":{}}"#
         case .requestHint:         return #"{"type":"requestHint","payload":{}}"#
         case .requestRewardedHint: return #"{"type":"requestRewardedHint","payload":{}}"#
+        case .extendTime:          return #"{"type":"extendTime","payload":{}}"#
         case .provideHint(let p):
             return #"{"type":"provideHint","payload":{"hint":\#(jsonLiteral(p.hint))}}"#
         }

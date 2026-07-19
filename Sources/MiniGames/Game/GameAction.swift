@@ -14,6 +14,7 @@ enum GameActionType: String, Codable {
     case requestHint
     case requestRewardedHint   // client watched a rewarded ad → server grants +1 hint then processes it
     case provideHint
+    case extendTime            // client watched a rewarded ad → +5 min on the match clock (once per game)
 }
 
 // MARK: - Payload types
@@ -42,6 +43,7 @@ struct GameActionEnvelope: Codable {
         case requestHint
         case requestRewardedHint
         case provideHint(ProvideHintPayload)
+        case extendTime
     }
 
     enum CodingKeys: String, CodingKey { case type, payload }
@@ -73,6 +75,8 @@ struct GameActionEnvelope: Codable {
             self.payload = .requestRewardedHint
         case .provideHint:
             self.payload = .provideHint(try container.decode(ProvideHintPayload.self, forKey: .payload))
+        case .extendTime:
+            self.payload = .extendTime
         }
     }
 

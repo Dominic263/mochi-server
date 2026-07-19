@@ -77,6 +77,10 @@ struct GameState: Codable {
     /// Answerer slow-play strikes. Nil means 0; the third strike forfeits.
     var answererStrikes: Int?
 
+    /// True once the questioner has spent their one rewarded-ad time
+    /// extension (+5 minutes on the match clock).
+    var matchExtensionUsed: Bool?
+
     init(roomCode: String, answererID: String, answererDisplayName: String) {
         self.roomCode = roomCode
         self.phase = .lobby
@@ -121,6 +125,7 @@ struct GameState: Codable {
         case matchDeadline
         case turnDeadline
         case answererStrikes
+        case matchExtensionUsed
 
         // Old field name from previous server state.
         case hintsRemaining
@@ -160,6 +165,7 @@ struct GameState: Codable {
         self.matchDeadline = try container.decodeIfPresent(Date.self, forKey: .matchDeadline)
         self.turnDeadline = try container.decodeIfPresent(Date.self, forKey: .turnDeadline)
         self.answererStrikes = try container.decodeIfPresent(Int.self, forKey: .answererStrikes)
+        self.matchExtensionUsed = try container.decodeIfPresent(Bool.self, forKey: .matchExtensionUsed)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -188,6 +194,7 @@ struct GameState: Codable {
         try container.encodeIfPresent(matchDeadline, forKey: .matchDeadline)
         try container.encodeIfPresent(turnDeadline, forKey: .turnDeadline)
         try container.encodeIfPresent(answererStrikes, forKey: .answererStrikes)
+        try container.encodeIfPresent(matchExtensionUsed, forKey: .matchExtensionUsed)
     }
 
     // MARK: Turn ownership

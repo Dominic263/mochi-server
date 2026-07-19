@@ -106,7 +106,46 @@ struct GameEngine {
 
         case .provideHint(let p):
             return try handleProvideHint(p, playerID: playerID, state: state)
+
+        case .extendTime:
+            return try handleExtendTime(playerID: playerID, state: state)
         }
+    }
+
+    // MARK: - Rewarded time extension
+
+    /// +5 minutes on the match clock, once per game, questioner only (it's
+    /// their clock). The client gates this behind a rewarded ad.
+    private static func handleExtendTime(
+        playerID: String,
+        state: GameState
+    ) throws -> EngineResult {
+        guard state.phase == .playing else {
+            throw EngineError.wrongPhase(expected: .playing, actual: state.phase)
+        }
+        guard playerID == state.questionerID else {
+            throw EngineError.wrongPlayer
+        }
+        guard let deadline = state.matchDeadline else {
+            return EngineResult(state: state)
+        }
+        guard state.matchExtensionUsed != true else {
+            return EngineResult(
+                state: state,
+                toQuestioner: .error("You've already used your time extension this game.")
+            )
+        }
+
+        var next = state
+        next.matchDeadline = deadline.addingTimeInterval(5 * 60)
+        next.matchExtensionUsed = true
+
+        return EngineResult(
+            state: next,
+            toAnswerer: .stateSnapshot(next.answererView()),
+            toQuestioner: .stateSnapshot(next.questionerView()),
+            toBoth: .error("⏰ 5 minutes added to the match clock!")
+        )
     }
 
     // MARK: - Core handlers
