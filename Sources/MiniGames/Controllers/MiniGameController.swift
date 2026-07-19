@@ -518,7 +518,7 @@ struct MiniGameController: RouteCollection {
     // as do any human ids whose device hasn't been bootstrapped — both are fine,
     // the columns are nullable.
 
-    private static func writeGameResult(
+    static func writeGameResult(
         db: any Database,
         logger: Logger,
         roomCode: String,

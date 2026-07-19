@@ -59,6 +59,15 @@ struct GameEngine {
     private static let freeHintUnlockCount = 10
     private static let maxRewardedHintsPerGame = 3
 
+    // Server-enforced clocks (see WebSocketManager's sweep for expiry handling).
+    static let matchLimitSeconds: TimeInterval = 20 * 60
+    static let turnLimitSeconds: TimeInterval = 60
+
+    /// Reset the per-turn clock — called by every state-advancing action.
+    private static func resetTurnClock(_ state: inout GameState) {
+        state.turnDeadline = Date().addingTimeInterval(turnLimitSeconds)
+    }
+
     static func process(
         action: GameActionEnvelope,
         playerID: String,
@@ -178,6 +187,7 @@ struct GameEngine {
         )
 
         next.questionsAsked.append(qna)
+        resetTurnClock(&next)
 
         return EngineResult(
             state: next,
@@ -216,6 +226,8 @@ struct GameEngine {
                 toBoth: .gameLost(secret: next.secret ?? "")
             )
         }
+
+        resetTurnClock(&next)
 
         return EngineResult(
             state: next,
@@ -307,6 +319,8 @@ struct GameEngine {
                 toBoth: .gameLost(secret: secret)
             )
         }
+
+        resetTurnClock(&next)
 
         return EngineResult(
             state: next,
@@ -419,6 +433,7 @@ struct GameEngine {
 
         next.hintPending = true
         next.lastHintQuestionCount = next.questionsAsked.count
+        resetTurnClock(&next)   // ball moves to the answerer (write the hint)
 
         return EngineResult(
             state: next,
@@ -454,6 +469,7 @@ struct GameEngine {
 
         var next = state
         next.hintPending = false
+        resetTurnClock(&next)   // ball returns to the questioner
 
         return EngineResult(
             state: next,
@@ -535,6 +551,8 @@ struct GameEngine {
 
         var next = state
         next.phase = .playing
+        next.matchDeadline = Date().addingTimeInterval(Self.matchLimitSeconds)
+        resetTurnClock(&next)
 
         return EngineResult(
             state: next,

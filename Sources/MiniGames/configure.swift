@@ -54,6 +54,45 @@ public func configure(_ app: Application) async throws {
     // matching paths; dynamic routes still handle everything else.)
     app.middleware.use(FileMiddleware(publicDirectory: app.directory.publicDirectory))
 
+    // MARK: - Clock-sweep persistence
+    // The WebSocketManager's timer sweep (match/turn clocks) mutates room state
+    // outside any request. This hook flushes those mutations to Postgres and,
+    // on a timeout-driven game end, writes the immutable GameResult exactly
+    // once (claimResultWrite guards against the ws.onText path double-writing).
+    let sweepDB = app.db
+    let sweepLogger = app.logger
+    WebSocketManager.shared.persistState = { roomCode, state in
+        Task {
+            do {
+                if let session = try await GameSession.query(on: sweepDB)
+                    .filter(\.$roomCode == roomCode)
+                    .first() {
+                    session.sync(from: state)
+                    try await session.save(on: sweepDB)
+                }
+            } catch {
+                sweepLogger.error("⏱ Failed to persist swept state for \(roomCode): \(error)")
+            }
+
+            guard state.phase == .won || state.phase == .lost,
+                  let questionerID = state.questionerID,
+                  let secret = state.secret,
+                  WebSocketManager.shared.claimResultWrite(roomCode: roomCode)
+            else { return }
+
+            await MiniGameController.writeGameResult(
+                db: sweepDB,
+                logger: sweepLogger,
+                roomCode: roomCode,
+                answererID: state.answererID,
+                questionerID: questionerID,
+                outcome: state.phase == .won ? "won" : "lost",
+                secret: secret,
+                questionsUsed: 20 - state.questionsRemaining
+            )
+        }
+    }
+
     // MARK: - Routes
     try routes(app)
 }

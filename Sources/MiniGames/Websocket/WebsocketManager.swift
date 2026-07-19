@@ -23,6 +23,100 @@ final class WebSocketManager: @unchecked Sendable {
     // Configuration
     private let roomCleanupTimeout: TimeInterval = 600  // 10 minutes (adjustable)
 
+    // MARK: - Clock sweep + persistence hook
+
+    /// Set once at boot (configure.swift). Called whenever the SWEEP mutates a
+    /// room's state so the change reaches Postgres — the manager itself has no
+    /// database access. Terminal states must also write the GameResult (the
+    /// hook is expected to guard with claimResultWrite).
+    var persistState: ((String, GameState) -> Void)?
+
+    /// One global timer that enforces match/turn deadlines (started lazily).
+    private var sweepTask: Task<Void, Never>?
+
+    private func startSweepIfNeeded() {
+        // Callers are already on the barrier queue.
+        guard sweepTask == nil else { return }
+        sweepTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self else { return }
+                self.queue.async(flags: .barrier) { self.sweepClocksLocked() }
+            }
+        }
+        print("⏱ Clock sweep started (5s interval)")
+    }
+
+    /// Enforce the 20-minute match clock and 60-second turn clock.
+    /// Must run on the barrier queue.
+    private func sweepClocksLocked() {
+        let now = Date()
+
+        for (code, room) in rooms {
+            guard room.state.phase == .playing else { continue }
+
+            // ── Match clock: questioner ran out of time → answerer wins ──
+            if let deadline = room.state.matchDeadline, deadline < now {
+                room.state.phase = .lost
+                room.broadcast(.error("⏱ Time's up — the 20-minute match clock ran out!"))
+                room.broadcast(.gameLost(secret: room.state.secret ?? ""))
+                print("⏱ [\(code)] Match clock expired → questioner loses")
+                persistState?(code, room.state)
+                continue
+            }
+
+            // ── Turn clock ──
+            guard let turnDeadline = room.state.turnDeadline, turnDeadline < now else { continue }
+
+            let laggard = room.state.currentTurnRole
+
+            // Never penalize the AI side — an OpenAI hiccup must not decide a
+            // game. Just give it a fresh clock.
+            if room.aiRole == laggard {
+                room.state.turnDeadline = now.addingTimeInterval(GameEngine.turnLimitSeconds)
+                continue
+            }
+
+            switch laggard {
+            case .questioner:
+                // Burn a question.
+                room.state.questionsRemaining -= 1
+                if room.state.questionsRemaining <= 0 {
+                    room.state.phase = .lost
+                    room.broadcast(.error("⏱ Time's up — no questions left!"))
+                    room.broadcast(.gameLost(secret: room.state.secret ?? ""))
+                    print("⏱ [\(code)] Questioner timed out with no questions left → lost")
+                } else {
+                    room.state.turnDeadline = now.addingTimeInterval(GameEngine.turnLimitSeconds)
+                    room.sendToAnswerer(.stateSnapshot(room.state.answererView()))
+                    room.sendToQuestioner(.stateSnapshot(room.state.questionerView()))
+                    room.broadcast(.error("⏱ Time's up — that cost a question"))
+                    print("⏱ [\(code)] Questioner timeout → question burned (\(room.state.questionsRemaining) left)")
+                }
+                persistState?(code, room.state)
+
+            case .answerer:
+                // Three strikes and the answerer forfeits.
+                let strikes = (room.state.answererStrikes ?? 0) + 1
+                room.state.answererStrikes = strikes
+                if strikes >= 3 {
+                    room.state.phase = .won
+                    room.broadcast(.error("⏱ \(room.state.answererDisplayName) took too long and forfeits the game"))
+                    room.broadcast(.gameWon(
+                        secret: room.state.secret ?? "",
+                        questionsUsed: 20 - room.state.questionsRemaining
+                    ))
+                    print("⏱ [\(code)] Answerer forfeited on strike 3")
+                } else {
+                    room.state.turnDeadline = now.addingTimeInterval(GameEngine.turnLimitSeconds)
+                    room.broadcast(.error("⏱ \(room.state.answererDisplayName) took too long — strike \(strikes) of 3"))
+                    print("⏱ [\(code)] Answerer strike \(strikes) of 3")
+                }
+                persistState?(code, room.state)
+            }
+        }
+    }
+
     // MARK: - AI Player registration
 
     func registerAI(_ ai: AIPlayer, roomCode: String) {
@@ -50,6 +144,7 @@ final class WebSocketManager: @unchecked Sendable {
     func createRoom(state: GameState) {
         queue.async(flags: .barrier) {
             self.rooms[state.roomCode] = GameRoom(state: state)
+            self.startSweepIfNeeded()
         }
     }
 
@@ -62,6 +157,7 @@ final class WebSocketManager: @unchecked Sendable {
             if self.rooms[state.roomCode] == nil {
                 print("💧 [\(state.roomCode)] Rehydrating room from persisted state (phase: \(state.phase.rawValue))")
                 self.rooms[state.roomCode] = GameRoom(state: state)
+                self.startSweepIfNeeded()
             }
             return true
         }

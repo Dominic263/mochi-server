@@ -60,6 +60,23 @@ struct GameState: Codable {
     /// Prevents consecutive hints without another question or guess.
     var lastHintQuestionCount: Int?
 
+    // MARK: Timer state (server-enforced clocks)
+    //
+    // All three are OPTIONAL so old persisted state_json rows (which lack these
+    // keys) still decode, and so shipped clients — which ignore unknown snapshot
+    // fields — keep working unchanged.
+
+    /// Wall-clock deadline for the whole match (20 minutes from startGame).
+    /// Nil = no match clock running.
+    var matchDeadline: Date?
+
+    /// Wall-clock deadline for the current turn (60 seconds, reset by every
+    /// state-advancing action). Nil = no turn clock running.
+    var turnDeadline: Date?
+
+    /// Answerer slow-play strikes. Nil means 0; the third strike forfeits.
+    var answererStrikes: Int?
+
     init(roomCode: String, answererID: String, answererDisplayName: String) {
         self.roomCode = roomCode
         self.phase = .lobby
@@ -101,6 +118,10 @@ struct GameState: Codable {
         case hintPending
         case lastHintQuestionCount
 
+        case matchDeadline
+        case turnDeadline
+        case answererStrikes
+
         // Old field name from previous server state.
         case hintsRemaining
     }
@@ -135,6 +156,10 @@ struct GameState: Codable {
         self.rewardedHintsUsedCount = try container.decodeIfPresent(Int.self, forKey: .rewardedHintsUsedCount) ?? 0
         self.hintPending = try container.decodeIfPresent(Bool.self, forKey: .hintPending) ?? false
         self.lastHintQuestionCount = try container.decodeIfPresent(Int.self, forKey: .lastHintQuestionCount)
+
+        self.matchDeadline = try container.decodeIfPresent(Date.self, forKey: .matchDeadline)
+        self.turnDeadline = try container.decodeIfPresent(Date.self, forKey: .turnDeadline)
+        self.answererStrikes = try container.decodeIfPresent(Int.self, forKey: .answererStrikes)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -159,6 +184,28 @@ struct GameState: Codable {
         try container.encode(rewardedHintsUsedCount, forKey: .rewardedHintsUsedCount)
         try container.encode(hintPending, forKey: .hintPending)
         try container.encodeIfPresent(lastHintQuestionCount, forKey: .lastHintQuestionCount)
+
+        try container.encodeIfPresent(matchDeadline, forKey: .matchDeadline)
+        try container.encodeIfPresent(turnDeadline, forKey: .turnDeadline)
+        try container.encodeIfPresent(answererStrikes, forKey: .answererStrikes)
+    }
+
+    // MARK: Turn ownership
+
+    /// Whose move it is right now: a trailing unanswered question or a pending
+    /// hint request puts the ball in the answerer's court; otherwise the
+    /// questioner is up.
+    var currentTurnRole: PlayerRole {
+        if hintPending { return .answerer }
+        if let last = questionsAsked.last, last.answer == nil { return .answerer }
+        return .questioner
+    }
+
+    // MARK: Clock helpers (for snapshots)
+
+    private func secondsRemaining(until deadline: Date?) -> Int? {
+        guard phase == .playing, let deadline else { return nil }
+        return max(0, Int(deadline.timeIntervalSinceNow.rounded()))
     }
 
     // MARK: Views
@@ -180,7 +227,9 @@ struct GameState: Codable {
                     .components(separatedBy: " ")
                     .filter { !$0.isEmpty }
                     .count
-            }
+            },
+            matchSecondsRemaining: secondsRemaining(until: matchDeadline),
+            turnSecondsRemaining: secondsRemaining(until: turnDeadline)
         )
     }
 
@@ -196,7 +245,9 @@ struct GameState: Codable {
             questionsRemaining: questionsRemaining,
             opponentDisplayName: questionerDisplayName,
             hintsRemaining: freeHintsRemaining,
-            secretWordCount: nil
+            secretWordCount: nil,
+            matchSecondsRemaining: secondsRemaining(until: matchDeadline),
+            turnSecondsRemaining: secondsRemaining(until: turnDeadline)
         )
     }
 
@@ -226,6 +277,9 @@ struct GameStateView: Codable {
     let opponentDisplayName: String?
     let hintsRemaining: Int
     let secretWordCount: Int?
+    // Server-enforced clocks (additive; old clients ignore unknown keys).
+    let matchSecondsRemaining: Int?
+    let turnSecondsRemaining: Int?
 
     init(
         roomCode: String,
@@ -238,7 +292,9 @@ struct GameStateView: Codable {
         questionsRemaining: Int = 20,
         opponentDisplayName: String? = nil,
         hintsRemaining: Int = 3,
-        secretWordCount: Int? = nil
+        secretWordCount: Int? = nil,
+        matchSecondsRemaining: Int? = nil,
+        turnSecondsRemaining: Int? = nil
     ) {
         self.roomCode = roomCode
         self.phase = phase
@@ -251,5 +307,7 @@ struct GameStateView: Codable {
         self.opponentDisplayName = opponentDisplayName
         self.hintsRemaining = hintsRemaining
         self.secretWordCount = secretWordCount
+        self.matchSecondsRemaining = matchSecondsRemaining
+        self.turnSecondsRemaining = turnSecondsRemaining
     }
 }
