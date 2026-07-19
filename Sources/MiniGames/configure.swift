@@ -41,6 +41,9 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(AddFriendCodeToAccount())     // Friends — shareable friend codes
     app.migrations.add(CreateFriendship())           // Friends — friendships table
     app.migrations.add(CreateFriendChallenge())      // Friends — challenge pointers
+    app.migrations.add(CreateFriendGroup())          // Groups — private leaderboard groups
+    app.migrations.add(CreateFriendGroupMember())    // Groups — memberships
+    app.migrations.add(CreateCoinGift())             // Gifts — daily coin gift ledger
     try await app.autoMigrate()
 
     // MARK: - Leaf (server-side HTML templating for the marketing site)

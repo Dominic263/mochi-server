@@ -30,8 +30,14 @@ func routes(_ app: Application) throws {
     // S3 — authenticated read endpoints (GET /me/stats, /me/history).
     try app.register(collection: MeController())
 
-    // Friends + challenges (auth) and the public /leaderboard.
+    // Friends + challenges (auth), the public /leaderboard, and /leaderboard/me.
     try app.register(collection: FriendsController())
+
+    // Friend groups — private leaderboards joined via invite code (auth).
+    try app.register(collection: GroupsController())
+
+    // Daily coin gifts between friends (auth).
+    try app.register(collection: GiftsController())
 
     // WebSocket route registered outside any auth middleware.
     // WS upgrade requests cannot carry Authorization headers —

@@ -14,6 +14,7 @@ import Fluent
 //   GET    /friends/challenges                   — pending challenges addressed to me (stale ones pruned)
 //   POST   /friends/challenges/:challengeID/accept — accept; client then joins via POST /game/join
 //   GET    /leaderboard                          — public top-50 by wins (no auth)
+//   GET    /leaderboard/me                       — my rank over ALL ranked accounts (auth)
 //
 // Win convention matches MeController: an account "played" a game_results row
 // if it was either side; it "won" if it was the questioner and the outcome was
@@ -35,6 +36,11 @@ struct FriendsController: RouteCollection {
 
         // Public — deliberately OUTSIDE the auth group.
         routes.get("leaderboard", use: leaderboard)
+
+        // Personal rank — authenticated, computed over ALL ranked accounts.
+        routes
+            .grouped(AccountAuthMiddleware())
+            .get("leaderboard", "me", use: myRank)
     }
 
     // MARK: - GET /friends
@@ -340,49 +346,58 @@ struct FriendsController: RouteCollection {
     // back to "Player".
 
     func leaderboard(req: Request) async throws -> [LeaderboardEntry] {
-        // All results attributed to ANY account on either side.
-        async let asAnswerer = GameResult.query(on: req.db)
-            .filter(\.$answererAccount.$id != nil)
-            .all()
-        async let asQuestioner = GameResult.query(on: req.db)
-            .filter(\.$questionerAccount.$id != nil)
-            .all()
-        let combined = try await (asAnswerer + asQuestioner)
+        let ranked = try await rankedEntries(on: req.db)
+        return ranked.prefix(50).map(\.entry)
+    }
 
-        // De-dupe (a row with both sides attributed matches both queries),
-        // then aggregate per account.
-        var seen = Set<UUID>()
-        var stats: [UUID: (played: Int, won: Int)] = [:]
-        for r in combined {
-            guard let rid = r.id, seen.insert(rid).inserted else { continue }
-            if let answererID = r.$answererAccount.id {
-                stats[answererID, default: (0, 0)].played += 1
-                if r.outcome == "lost" { stats[answererID, default: (0, 0)].won += 1 }
-            }
-            if let questionerID = r.$questionerAccount.id {
-                stats[questionerID, default: (0, 0)].played += 1
-                if r.outcome == "won" { stats[questionerID, default: (0, 0)].won += 1 }
-            }
+    // MARK: - GET /leaderboard/me  (auth)
+    //
+    // My 1-based rank by the SAME ordering as /leaderboard, computed over ALL
+    // accounts with results (not just the top 50). 404 if I have no games.
+
+    func myRank(req: Request) async throws -> MyRankResponse {
+        let accountID = try req.account.requireID()
+
+        let ranked = try await rankedEntries(on: req.db)
+        guard let index = ranked.firstIndex(where: { $0.accountID == accountID }) else {
+            throw Abort(.notFound, reason: "You haven't played any games yet.")
         }
-        guard !stats.isEmpty else { return [] }
+        let entry = ranked[index].entry
+        return MyRankResponse(
+            rank: index + 1,
+            wins: entry.wins,
+            gamesPlayed: entry.gamesPlayed,
+            streak: entry.streak
+        )
+    }
 
-        let accountsByID = try await accountsKeyedByID(Array(stats.keys), on: req.db)
+    /// Every account with at least one attributed result, sorted by the
+    /// leaderboard ordering (wins desc, then games played desc, then name).
+    private func rankedEntries(
+        on db: any Database
+    ) async throws -> [(accountID: UUID, entry: LeaderboardEntry)] {
+        let lines = try await LeaderboardStats.lines(for: nil, on: db)
+        guard !lines.isEmpty else { return [] }
 
-        return stats
-            .map { (id, s) in
-                LeaderboardEntry(
-                    displayName: displayNameOrFallback(accountsByID[id]?.displayName),
-                    wins: s.won,
-                    gamesPlayed: s.played
+        let accountsByID = try await accountsKeyedByID(Array(lines.keys), on: db)
+
+        return lines
+            .map { (id, line) in
+                (
+                    accountID: id,
+                    entry: LeaderboardEntry(
+                        displayName: displayNameOrFallback(accountsByID[id]?.displayName),
+                        wins: line.won,
+                        gamesPlayed: line.played,
+                        streak: line.streak
+                    )
                 )
             }
             .sorted {
-                if $0.wins != $1.wins { return $0.wins > $1.wins }
-                if $0.gamesPlayed != $1.gamesPlayed { return $0.gamesPlayed > $1.gamesPlayed }
-                return $0.displayName < $1.displayName
+                if $0.entry.wins != $1.entry.wins { return $0.entry.wins > $1.entry.wins }
+                if $0.entry.gamesPlayed != $1.entry.gamesPlayed { return $0.entry.gamesPlayed > $1.entry.gamesPlayed }
+                return $0.entry.displayName < $1.entry.displayName
             }
-            .prefix(50)
-            .map { $0 }
     }
 
     // MARK: - Friend-code backfill
@@ -560,4 +575,12 @@ struct LeaderboardEntry: Content {
     let displayName: String
     let wins: Int
     let gamesPlayed: Int
+    let streak: Int          // +N straight wins, -N straight losses, 0 = no games
+}
+
+struct MyRankResponse: Content {
+    let rank: Int            // 1-based, same ordering as /leaderboard
+    let wins: Int
+    let gamesPlayed: Int
+    let streak: Int
 }
