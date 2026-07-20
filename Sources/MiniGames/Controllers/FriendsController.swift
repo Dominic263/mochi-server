@@ -13,8 +13,8 @@ import Fluent
 //   POST   /friends/challenge                    — record a challenge pointing at an existing lobby room
 //   GET    /friends/challenges                   — pending challenges addressed to me (stale ones pruned)
 //   POST   /friends/challenges/:challengeID/accept — accept; client then joins via POST /game/join
-//   GET    /leaderboard                          — public top-50 by wins (no auth)
-//   GET    /leaderboard/me                       — my rank over ALL ranked accounts (auth)
+//   GET    /leaderboard                          — public top-50 by wins (no auth, signed-in accounts only)
+//   GET    /leaderboard/me                       — my rank over ALL ranked accounts (auth, 403 if not signed in)
 //
 // Win convention matches MeController: an account "played" a game_results row
 // if it was either side; it "won" if it was the questioner and the outcome was
@@ -373,8 +373,9 @@ struct FriendsController: RouteCollection {
 
     // MARK: - GET /leaderboard  (public — no auth)
     //
-    // Top 50 accounts by wins, computed live from game_results. Only accounts
-    // with at least one attributed result appear; missing display names fall
+    // Top 50 accounts by wins, computed live from game_results. Only SIGNED-IN
+    // accounts (Sign in with Apple) with at least one attributed result appear
+    // — anonymous shadow devices are never ranked. Missing display names fall
     // back to "Player".
 
     func leaderboard(req: Request) async throws -> [LeaderboardEntry] {
@@ -385,9 +386,13 @@ struct FriendsController: RouteCollection {
     // MARK: - GET /leaderboard/me  (auth)
     //
     // My 1-based rank by the SAME ordering as /leaderboard, computed over ALL
-    // accounts with results (not just the top 50). 404 if I have no games.
+    // ranked accounts (not just the top 50). 403 if my account isn't linked to
+    // Apple (only signed-in accounts are ranked); 404 if I have no games.
 
     func myRank(req: Request) async throws -> MyRankResponse {
+        guard req.account.appleUserID != nil else {
+            throw Abort(.forbidden, reason: "Sign in with Apple to be ranked")
+        }
         let accountID = try req.account.requireID()
 
         let ranked = try await rankedEntries(on: req.db)
@@ -403,8 +408,11 @@ struct FriendsController: RouteCollection {
         )
     }
 
-    /// Every account with at least one attributed result, sorted by the
-    /// leaderboard ordering (wins desc, then games played desc, then name).
+    /// Every SIGNED-IN account (apple_user_id set) with at least one attributed
+    /// result, sorted by the leaderboard ordering (wins desc, then games played
+    /// desc, then name). Anonymous shadow accounts are dropped here so they
+    /// never appear on the global boards; GROUP leaderboards deliberately stay
+    /// unfiltered (see GroupsController).
     private func rankedEntries(
         on db: any Database
     ) async throws -> [(accountID: UUID, entry: LeaderboardEntry)] {
@@ -414,11 +422,14 @@ struct FriendsController: RouteCollection {
         let accountsByID = try await accountsKeyedByID(Array(lines.keys), on: db)
 
         return lines
-            .map { (id, line) in
-                (
+            .compactMap { (id, line) -> (accountID: UUID, entry: LeaderboardEntry)? in
+                guard let account = accountsByID[id], account.appleUserID != nil else {
+                    return nil
+                }
+                return (
                     accountID: id,
                     entry: LeaderboardEntry(
-                        displayName: displayNameOrFallback(accountsByID[id]?.displayName),
+                        displayName: displayNameOrFallback(account.displayName),
                         wins: line.won,
                         gamesPlayed: line.played,
                         streak: line.streak

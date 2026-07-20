@@ -1,0 +1,60 @@
+#extend("base"):
+#export("title"):Join Game#endexport
+#export("activePage"):join#endexport
+
+#export("content"):
+
+<section class="page-header">
+    <div class="page-header-inner">
+        <p class="eyebrow">Game invite</p>
+        <h1 class="page-title">You're invited to a Mochi word duel!</h1>
+        <p class="page-date">Room code</p>
+
+        <p class="join-code">#(roomCode)</p>
+
+        <div class="join-actions">
+            <a class="store-btn" href="mochi://join/#(roomCode)" aria-label="Open this game in the Mochi app">
+                <span class="store-btn-text">
+                    <small>Got the app?</small>
+                    <strong>Open in Mochi</strong>
+                </span>
+            </a>
+            <a class="store-btn" href="https://apps.apple.com/app/id6762576982" target="_blank" rel="noopener" aria-label="Download Mochi on the App Store">
+                <span class="store-btn-icon"></span>
+                <span class="store-btn-text">
+                    <small>Download on the</small>
+                    <strong>App Store</strong>
+                </span>
+            </a>
+        </div>
+
+        <p class="btn-hint">No luck with the buttons? Open Mochi and enter the code above in Join Game.</p>
+    </div>
+</section>
+
+<style>
+    .join-code {
+        display: inline-block;
+        margin: 1rem 0 2rem;
+        padding: 0.75rem 1.75rem;
+        font-family: var(--font-display);
+        font-size: clamp(2.2rem, 8vw, 3.4rem);
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        color: var(--text-primary);
+        background: var(--yellow-faint);
+        border: 2px dashed var(--yellow-border);
+        border-radius: var(--radius);
+    }
+    .join-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+    }
+    .page-header .btn-hint { padding-left: 0; }
+</style>
+
+#endexport
+#endextend

@@ -81,14 +81,17 @@ actor AIPlayer {
                     if let state = WebSocketManager.shared.currentState(for: roomCode),
                        state.secret != nil, state.phase == .lobby {
                         didStartAsking = true
-                        try? await Task.sleep(for: .milliseconds(800))
+                        // Hold the lobby for ~3s so the human actually sees it
+                        // (a near-instant start felt jarring and bot-like).
+                        try? await Task.sleep(for: .milliseconds(Int.random(in: 2800...3200)))
                         sendAction(GameActionEnvelope.encoded(.startGame), app: app)
                     }
                 }
             case .stateSnapshot(let phase, let opponentConnected, let secretConfirmed):
                 if phase == "lobby", opponentConnected, secretConfirmed, !didStartAsking {
                     didStartAsking = true
-                    try? await Task.sleep(for: .milliseconds(600))
+                    // Same ~3s lobby hold as the opponentJoined path above.
+                    try? await Task.sleep(for: .milliseconds(Int.random(in: 2800...3200)))
                     sendAction(GameActionEnvelope.encoded(.startGame), app: app)
                 }
             case .questionAsked(_, _, let question):
@@ -127,12 +130,17 @@ actor AIPlayer {
             case .gameStarted:
                 guard !didStartAsking else { break }
                 didStartAsking = true
+                // First question of the game only: give the human's freshly-
+                // presented game screen ~2s to settle before Q1 lands.
+                try? await Task.sleep(for: .milliseconds(Int.random(in: 2000...2500)))
                 try? await Task.sleep(for: .milliseconds(1200))
                 await takeTurn(app: app)
 
             case .stateSnapshot(let phase, _, _):
                 if phase == "playing", !didStartAsking {
                     didStartAsking = true
+                    // Same first-question settle pause as the gameStarted path.
+                    try? await Task.sleep(for: .milliseconds(Int.random(in: 2000...2500)))
                     try? await Task.sleep(for: .milliseconds(1000))
                     await takeTurn(app: app)
                 }
