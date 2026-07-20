@@ -39,6 +39,9 @@ func routes(_ app: Application) throws {
     // Daily coin gifts between friends (auth).
     try app.register(collection: GiftsController())
 
+    // APNs token registration (device-resolved, no bearer — see controller).
+    try app.register(collection: PushController())
+
     // WebSocket route registered outside any auth middleware.
     // WS upgrade requests cannot carry Authorization headers —
     // identity is established via the one-time token in the query string.

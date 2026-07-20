@@ -3,6 +3,8 @@ import FluentPostgresDriver
 import JWT
 import Leaf
 import Vapor
+import VaporAPNS
+import APNSCore
 
 public func configure(_ app: Application) async throws {
 
@@ -33,6 +35,34 @@ public func configure(_ app: Application) async throws {
     app.jwt.apple.applicationIdentifier =
         Environment.get("APPLE_APP_BUNDLE_ID") ?? "com.relentlessforgellc.mochi"
 
+    // MARK: - APNs (direct pushes)
+    // Token auth (.p8) — the same key signs for BOTH APNs environments, so we
+    // configure a production and a development (sandbox) container and route
+    // each send by the token's stored environment (PushToken.isSandbox).
+    // Locally the APNS_* vars are usually unset — log and skip; PushService
+    // then no-ops every send.
+    if let apnsKeyID  = Environment.get("APNS_KEY_ID"),
+       let apnsTeamID = Environment.get("APNS_TEAM_ID"),
+       let apnsKeyP8  = Environment.get("APNS_KEY_P8")
+    {
+        do {
+            // The env var holds the full .p8 PEM. Some injection paths flatten
+            // real newlines into literal "\n" — normalize before parsing the
+            // P-256 private key from its PEM representation.
+            let pem = apnsKeyP8.replacingOccurrences(of: "\\n", with: "\n")
+            app.apns.configure(.jwt(
+                privateKey: try .loadFrom(string: pem),
+                keyIdentifier: apnsKeyID,
+                teamIdentifier: apnsTeamID
+            ))
+            app.logger.info("📣 APNs configured (production + development), topic \(PushService.topic)")
+        } catch {
+            app.logger.error("📣 APNs key parsing failed — pushes disabled: \(error)")
+        }
+    } else {
+        app.logger.notice("📣 APNS_KEY_ID / APNS_TEAM_ID / APNS_KEY_P8 unset — pushes disabled (local dev).")
+    }
+
     // MARK: - Migrations
     app.migrations.add(CreateGameSession())
     app.migrations.add(CreateGameResult())
@@ -44,6 +74,7 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateFriendGroup())          // Groups — private leaderboard groups
     app.migrations.add(CreateFriendGroupMember())    // Groups — memberships
     app.migrations.add(CreateCoinGift())             // Gifts — daily coin gift ledger
+    app.migrations.add(CreatePushToken())            // Push — APNs device tokens
     try await app.autoMigrate()
 
     // MARK: - Leaf (server-side HTML templating for the marketing site)

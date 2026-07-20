@@ -19,6 +19,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         // 🔑 JWT signing/verification — used for Sign in with Apple identity tokens (S2).
         .package(url: "https://github.com/vapor/jwt.git", from: "5.0.0"),
+        // 📣 Direct APNs pushes (challenge / friend request / gift alerts).
+        .package(url: "https://github.com/vapor/apns.git", from: "4.0.0"),
     ],
     targets: [
         .executableTarget(
@@ -29,6 +31,7 @@ let package = Package(
                 .product(name: "Leaf", package: "leaf"),
                 .product(name: "Vapor", package: "vapor"),
                 .product(name: "JWT", package: "jwt"),
+                .product(name: "VaporAPNS", package: "apns"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],

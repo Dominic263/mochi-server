@@ -144,6 +144,22 @@ struct FriendsController: RouteCollection {
         let friendship = Friendship(requesterID: accountID, addresseeID: targetID)
         try await friendship.save(on: req.db)
 
+        // Fire-and-forget push to the addressee (best-effort, after the write).
+        let requesterName = displayNameOrFallback(req.account.displayName)
+        let app = req.application
+        let db = req.db
+        Task {
+            await PushService.send(
+                to: targetID,
+                title: "New friend request",
+                body: "\(requesterName) wants to be your friend",
+                badge: await PushService.badgeCount(for: targetID, on: db),
+                kind: "friend_request",
+                app: app,
+                db: db
+            )
+        }
+
         return FriendRequestDTO(
             friendshipID: try friendship.requireID(),
             displayName: displayNameOrFallback(target.displayName),
@@ -258,6 +274,22 @@ struct FriendsController: RouteCollection {
             roomCode: roomCode
         )
         try await challenge.save(on: req.db)
+
+        // Fire-and-forget push to the challengee (best-effort, after the write).
+        let challengerName = displayNameOrFallback(req.account.displayName)
+        let app = req.application
+        let db = req.db
+        Task {
+            await PushService.send(
+                to: friendID,
+                title: "Game on!",
+                body: "\(challengerName) challenged you to a word duel — tap to accept!",
+                badge: await PushService.badgeCount(for: friendID, on: db),
+                kind: "challenge",
+                app: app,
+                db: db
+            )
+        }
 
         let response = Response(status: .created)
         try response.content.encode(ChallengeCreatedResponse(challengeID: try challenge.requireID()))

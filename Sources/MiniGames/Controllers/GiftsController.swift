@@ -67,6 +67,22 @@ struct GiftsController: RouteCollection {
         )
         try await gift.save(on: req.db)
 
+        // Fire-and-forget push to the recipient (best-effort, after the write).
+        let senderName = displayNameOrFallback(req.account.displayName)
+        let app = req.application
+        let db = req.db
+        Task {
+            await PushService.send(
+                to: friendID,
+                title: "A gift for you",
+                body: "\(senderName) sent you \(Self.giftAmount) coins — claim them!",
+                badge: await PushService.badgeCount(for: friendID, on: db),
+                kind: "gift",
+                app: app,
+                db: db
+            )
+        }
+
         let response = Response(status: .created)
         try response.content.encode(GiftCreatedResponse(giftID: try gift.requireID()))
         return response
