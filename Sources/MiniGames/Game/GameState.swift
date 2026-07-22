@@ -81,6 +81,10 @@ struct GameState: Codable {
     /// extension (+5 minutes on the match clock).
     var matchExtensionUsed: Bool?
 
+    /// Set while a hint is pending — the match clock freezes at this instant
+    /// so the questioner isn't billed for the answerer's hint-writing time.
+    var hintRequestedAt: Date?
+
     init(roomCode: String, answererID: String, answererDisplayName: String) {
         self.roomCode = roomCode
         self.phase = .lobby
@@ -126,6 +130,7 @@ struct GameState: Codable {
         case turnDeadline
         case answererStrikes
         case matchExtensionUsed
+        case hintRequestedAt
 
         // Old field name from previous server state.
         case hintsRemaining
@@ -166,6 +171,7 @@ struct GameState: Codable {
         self.turnDeadline = try container.decodeIfPresent(Date.self, forKey: .turnDeadline)
         self.answererStrikes = try container.decodeIfPresent(Int.self, forKey: .answererStrikes)
         self.matchExtensionUsed = try container.decodeIfPresent(Bool.self, forKey: .matchExtensionUsed)
+        self.hintRequestedAt = try container.decodeIfPresent(Date.self, forKey: .hintRequestedAt)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -195,6 +201,7 @@ struct GameState: Codable {
         try container.encodeIfPresent(turnDeadline, forKey: .turnDeadline)
         try container.encodeIfPresent(answererStrikes, forKey: .answererStrikes)
         try container.encodeIfPresent(matchExtensionUsed, forKey: .matchExtensionUsed)
+        try container.encodeIfPresent(hintRequestedAt, forKey: .hintRequestedAt)
     }
 
     // MARK: Turn ownership
@@ -212,6 +219,11 @@ struct GameState: Codable {
 
     private func secondsRemaining(until deadline: Date?) -> Int? {
         guard phase == .playing, let deadline else { return nil }
+        // While a hint is being written the match clock is FROZEN at the
+        // moment of the request (provideHint credits the elapsed time back).
+        if let pausedAt = hintRequestedAt {
+            return max(0, Int(deadline.timeIntervalSince(pausedAt).rounded()))
+        }
         return max(0, Int(deadline.timeIntervalSinceNow.rounded()))
     }
 

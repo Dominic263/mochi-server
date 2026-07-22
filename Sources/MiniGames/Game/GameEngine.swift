@@ -472,6 +472,7 @@ struct GameEngine {
 
         next.hintPending = true
         next.lastHintQuestionCount = next.questionsAsked.count
+        next.hintRequestedAt = Date()   // freeze the match clock
         resetTurnClock(&next)   // ball moves to the answerer (write the hint)
 
         return EngineResult(
@@ -508,6 +509,12 @@ struct GameEngine {
 
         var next = state
         next.hintPending = false
+        // Credit the hint-writing time back to the match clock — the
+        // questioner shouldn't pay for the answerer's composing delay.
+        if let pausedAt = next.hintRequestedAt, let deadline = next.matchDeadline {
+            next.matchDeadline = deadline.addingTimeInterval(Date().timeIntervalSince(pausedAt))
+        }
+        next.hintRequestedAt = nil
         resetTurnClock(&next)   // ball returns to the questioner
 
         return EngineResult(

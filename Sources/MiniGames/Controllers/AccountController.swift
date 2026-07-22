@@ -45,11 +45,14 @@ struct AccountController: RouteCollection {
             device.lastSeenAt = Date()
             try await device.save(on: req.db)
 
-            if let name = body.displayName,
-               !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               (account.displayName ?? "").isEmpty
+            // Keep the account's name in sync with the client's profile on
+            // EVERY launch (it used to only be written once, so leaderboards
+            // and friend lists were stuck showing "Player 1234" forever).
+            if let name = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !name.isEmpty,
+               account.displayName != String(name.prefix(30))
             {
-                account.displayName = name
+                account.displayName = String(name.prefix(30))
                 try await account.save(on: req.db)
             }
 

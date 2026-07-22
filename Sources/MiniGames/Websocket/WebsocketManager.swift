@@ -56,7 +56,10 @@ final class WebSocketManager: @unchecked Sendable {
             guard room.state.phase == .playing else { continue }
 
             // ── Match clock: questioner ran out of time → answerer wins ──
-            if let deadline = room.state.matchDeadline, deadline < now {
+            // (Frozen while a hint is pending — provideHint credits the
+            // elapsed time back, so never expire the match mid-hint.)
+            if room.state.hintRequestedAt == nil,
+               let deadline = room.state.matchDeadline, deadline < now {
                 room.state.phase = .lost
                 room.broadcast(.error("Time's up — the 20-minute match clock ran out!"))
                 room.broadcast(.gameLost(secret: room.state.secret ?? ""))
