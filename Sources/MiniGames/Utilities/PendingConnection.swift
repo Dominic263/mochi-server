@@ -12,6 +12,13 @@ struct PendingConnection {
     // True only for tokens minted by /game/reconnect. Lets the WS handler
     // send the state snapshot immediately and skip the spurious opponentJoined.
     var isReconnect: Bool = false
+    // Optional lobby appearance carried from the join HTTP body to the WS
+    // connect (nil = not sent — e.g. old clients or /game/reconnect tokens,
+    // where the persisted GameState already holds the values).
+    var avatarID: String? = nil
+    var headwear: String? = nil
+    var eyewear: String? = nil
+    var neckwear: String? = nil
 }
 
 // MARK: - PendingConnections

@@ -55,6 +55,30 @@ final class WebSocketManager: @unchecked Sendable {
         for (code, room) in rooms {
             guard room.state.phase == .playing else { continue }
 
+            // ── Ad pause ──
+            // While a rewarded ad plays, BOTH clocks are frozen — no match
+            // expiry, no burned questions, no strikes. A pause that outlives
+            // the cap (dead client, backgrounded app) is force-ended here,
+            // crediting the capped time back to both deadlines.
+            if let adPausedAt = room.state.adPausedAt {
+                if now.timeIntervalSince(adPausedAt) >= GameEngine.adPauseMaxSeconds {
+                    let credit = GameEngine.adPauseMaxSeconds
+                    if let deadline = room.state.matchDeadline {
+                        room.state.matchDeadline = deadline.addingTimeInterval(credit)
+                    }
+                    if let deadline = room.state.turnDeadline {
+                        room.state.turnDeadline = deadline.addingTimeInterval(credit)
+                    }
+                    room.state.adPausedAt = nil
+                    room.state.adPausedBy = nil
+                    room.sendToAnswerer(.stateSnapshot(room.state.answererView()))
+                    room.sendToQuestioner(.stateSnapshot(room.state.questionerView()))
+                    persistState?(code, room.state)
+                    print("⏱ [\(code)] Ad pause auto-expired after \(Int(credit))s — clocks resumed")
+                }
+                continue
+            }
+
             // ── Match clock: questioner ran out of time → answerer wins ──
             // (Frozen while a hint is pending — provideHint credits the
             // elapsed time back, so never expire the match mid-hint.)
@@ -196,6 +220,10 @@ final class WebSocketManager: @unchecked Sendable {
         roomCode: String,
         playerID: String,
         displayName: String,
+        avatarID: String? = nil,
+        headwear: String? = nil,
+        eyewear: String? = nil,
+        neckwear: String? = nil,
         send: @escaping @Sendable (String) -> Void
     ) -> UUID? {
         queue.sync(flags: .barrier) {
@@ -203,6 +231,12 @@ final class WebSocketManager: @unchecked Sendable {
             let connectionID = UUID()
             room.state.questionerID = playerID
             room.state.questionerDisplayName = displayName
+            // Appearance: only overwrite when supplied — a reconnect token
+            // carries nil and must not wipe the values already in the state.
+            if let avatarID { room.state.questionerAvatarID = avatarID }
+            if let headwear { room.state.questionerHeadwear = headwear }
+            if let eyewear  { room.state.questionerEyewear  = eyewear }
+            if let neckwear { room.state.questionerNeckwear = neckwear }
             room.questionerSend = send
             room.questionerConnectionID = connectionID
 

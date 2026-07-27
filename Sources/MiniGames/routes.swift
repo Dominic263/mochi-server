@@ -100,6 +100,12 @@ func routes(_ app: Application) throws {
     // Daily coin gifts between friends (auth).
     try app.register(collection: GiftsController())
 
+    // Public player profiles — GET /players/:accountID/profile (auth).
+    try app.register(collection: PlayersController())
+
+    // Cached kid-friendly word definitions — POST /words/define (auth).
+    try app.register(collection: WordsController())
+
     // APNs token registration (device-resolved, no bearer — see controller).
     try app.register(collection: PushController())
 

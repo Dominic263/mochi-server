@@ -51,6 +51,33 @@ final class Account: Model, Content, @unchecked Sendable {
     @OptionalField(key: "friend_code")
     var friendCode: String?
 
+    // MARK: Appearance + progression (synced from the client via /account/bootstrap)
+    // All nullable — accounts that predate the sync (or belong to old clients
+    // that never send these fields) stay NULL. Cosmetic ids are CLIENT-defined
+    // catalog strings (≤40 chars); the server never validates the catalog.
+
+    @OptionalField(key: "avatar_id")
+    var avatarID: String?
+
+    @OptionalField(key: "equipped_headwear")
+    var equippedHeadwear: String?
+
+    @OptionalField(key: "equipped_eyewear")
+    var equippedEyewear: String?
+
+    @OptionalField(key: "equipped_neckwear")
+    var equippedNeckwear: String?
+
+    /// Lifetime XP. NULL means "never synced" — readers coalesce to 0.
+    /// Only ever moves UP (reinstall protection in bootstrap).
+    @OptionalField(key: "xp")
+    var xp: Int?
+
+    /// Player level. NULL means "never synced" — readers coalesce to 1.
+    /// Only ever moves UP (reinstall protection in bootstrap).
+    @OptionalField(key: "level")
+    var level: Int?
+
     /// One account has many devices (installs). See Device.
     @Children(for: \.$account)
     var devices: [Device]

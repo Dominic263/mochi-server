@@ -109,7 +109,89 @@ struct GameEngine {
 
         case .extendTime:
             return try handleExtendTime(playerID: playerID, state: state)
+
+        case .beginAdPause:
+            return try handleBeginAdPause(playerID: playerID, state: state)
+
+        case .endAdPause:
+            return try handleEndAdPause(playerID: playerID, state: state)
         }
+    }
+
+    // MARK: - Rewarded-ad clock pause
+
+    /// Hard cap on ad pauses per game — suggestion refreshes are already
+    /// limited to 8 GPT calls per room and the time extension is once per
+    /// game, so 10 covers every legitimate ad with headroom.
+    private static let maxAdPausesPerGame = 10
+
+    /// How long an ad pause may run before the sweep force-ends it. Rewarded
+    /// ads run ~15-60s; anything past this is a stall (or a dead client).
+    static let adPauseMaxSeconds: TimeInterval = 120
+
+    /// Freeze BOTH clocks while a rewarded ad plays (suggestion refresh, time
+    /// extension). Watching an ad must never cost a question, a strike, or
+    /// match time. No-op when a hint pause is already protecting the clocks.
+    private static func handleBeginAdPause(
+        playerID: String,
+        state: GameState
+    ) throws -> EngineResult {
+        guard state.phase == .playing else {
+            throw EngineError.wrongPhase(expected: .playing, actual: state.phase)
+        }
+        // Hint flow already freezes the match clock and hands the turn to the
+        // answerer; layering an ad pause on top would double-credit time.
+        guard state.hintRequestedAt == nil, state.adPausedAt == nil else {
+            return EngineResult(state: state)
+        }
+        let used = state.adPausesUsed ?? 0
+        guard used < maxAdPausesPerGame else {
+            return EngineResult(state: state)
+        }
+
+        var next = state
+        next.adPausedAt = Date()
+        next.adPausedBy = playerID
+        next.adPausesUsed = used + 1
+
+        return EngineResult(
+            state: next,
+            toAnswerer: .stateSnapshot(next.answererView()),
+            toQuestioner: .stateSnapshot(next.questionerView())
+        )
+    }
+
+    /// Unfreeze after the ad: push both deadlines forward by exactly the time
+    /// the pause ran, so the player resumes with the clocks they left.
+    private static func handleEndAdPause(
+        playerID: String,
+        state: GameState
+    ) throws -> EngineResult {
+        guard let pausedAt = state.adPausedAt else {
+            return EngineResult(state: state)
+        }
+        // Only the player who started the pause may end it (the sweep's
+        // auto-expiry bypasses the engine entirely).
+        guard state.adPausedBy == nil || state.adPausedBy == playerID else {
+            return EngineResult(state: state)
+        }
+
+        var next = state
+        let paused = min(Date().timeIntervalSince(pausedAt), adPauseMaxSeconds)
+        if let deadline = next.matchDeadline {
+            next.matchDeadline = deadline.addingTimeInterval(paused)
+        }
+        if let deadline = next.turnDeadline {
+            next.turnDeadline = deadline.addingTimeInterval(paused)
+        }
+        next.adPausedAt = nil
+        next.adPausedBy = nil
+
+        return EngineResult(
+            state: next,
+            toAnswerer: .stateSnapshot(next.answererView()),
+            toQuestioner: .stateSnapshot(next.questionerView())
+        )
     }
 
     // MARK: - Rewarded time extension

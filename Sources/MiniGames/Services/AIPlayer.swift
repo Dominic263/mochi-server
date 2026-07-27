@@ -115,7 +115,12 @@ actor AIPlayer {
         WebSocketManager.shared.registerAI(self, roomCode: code)
 
         _ = WebSocketManager.shared.connectQuestioner(
-            roomCode: code, playerID: aiID, displayName: aiName
+            roomCode: code, playerID: aiID, displayName: aiName,
+            // Fixed AI appearance per difficulty (lobby/chat identity).
+            avatarID: difficulty.aiAvatarID,
+            headwear: difficulty.aiHeadwear,
+            eyewear: difficulty.aiEyewear,
+            neckwear: difficulty.aiNeckwear
         ) { json in
             WebSocketManager.shared.routeToAI(playerID: aiID, roomCode: code, json: json)
         }
@@ -754,6 +759,8 @@ extension GameActionEnvelope {
         case .requestHint:         return #"{"type":"requestHint","payload":{}}"#
         case .requestRewardedHint: return #"{"type":"requestRewardedHint","payload":{}}"#
         case .extendTime:          return #"{"type":"extendTime","payload":{}}"#
+        case .beginAdPause:        return #"{"type":"beginAdPause","payload":{}}"#
+        case .endAdPause:          return #"{"type":"endAdPause","payload":{}}"#
         case .provideHint(let p):
             return #"{"type":"provideHint","payload":{"hint":\#(jsonLiteral(p.hint))}}"#
         }

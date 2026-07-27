@@ -47,6 +47,15 @@ private func sanitizedDisplayName(_ raw: String) -> String {
     return clipped.isEmpty ? "Player" : clipped
 }
 
+/// Optional cosmetic id from a request body: trimmed, clipped to 40 chars,
+/// blank/absent → nil. Client-defined catalog strings — never validated here.
+private func sanitizedCosmetic(_ raw: String?) -> String? {
+    guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !trimmed.isEmpty
+    else { return nil }
+    return String(trimmed.prefix(40))
+}
+
 private func normalizedRoomCode(_ raw: String) throws -> String {
     let code = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     guard !code.isEmpty, code.count <= 16 else {
@@ -228,13 +237,22 @@ struct MiniGameController: RouteCollection {
         struct Body: Content {
             let playerID: String
             let displayName: String
+            // Optional lobby appearance (additive — old clients omit them).
+            let avatarID: String?
+            let headwear: String?
+            let eyewear: String?
+            let neckwear: String?
         }
         let body = try req.content.decode(Body.self)
         let playerID    = try validatedPlayerID(body.playerID)
         let displayName = sanitizedDisplayName(body.displayName)
 
         let roomCode = try await uniqueRoomCode(db: req.db)
-        let state    = GameState(roomCode: roomCode, answererID: playerID, answererDisplayName: displayName)
+        var state    = GameState(roomCode: roomCode, answererID: playerID, answererDisplayName: displayName)
+        state.answererAvatarID = sanitizedCosmetic(body.avatarID)
+        state.answererHeadwear = sanitizedCosmetic(body.headwear)
+        state.answererEyewear  = sanitizedCosmetic(body.eyewear)
+        state.answererNeckwear = sanitizedCosmetic(body.neckwear)
 
         let session = GameSession(
             roomCode: roomCode,
@@ -267,6 +285,11 @@ struct MiniGameController: RouteCollection {
             let playerID: String
             let roomCode: String
             let displayName: String
+            // Optional lobby appearance (additive — old clients omit them).
+            let avatarID: String?
+            let headwear: String?
+            let eyewear: String?
+            let neckwear: String?
         }
         let body = try req.content.decode(Body.self)
         let playerID    = try validatedPlayerID(body.playerID)
@@ -292,7 +315,11 @@ struct MiniGameController: RouteCollection {
                 playerID: playerID,
                 roomCode: roomCode,
                 role: .questioner,
-                displayName: displayName
+                displayName: displayName,
+                avatarID: sanitizedCosmetic(body.avatarID),
+                headwear: sanitizedCosmetic(body.headwear),
+                eyewear:  sanitizedCosmetic(body.eyewear),
+                neckwear: sanitizedCosmetic(body.neckwear)
             )
         )
 
@@ -308,6 +335,11 @@ struct MiniGameController: RouteCollection {
             let aiRole: String
             // Optional so shipped clients (which don't send it) keep working.
             let difficulty: String?
+            // Optional lobby appearance for the HUMAN seat (additive).
+            let avatarID: String?
+            let headwear: String?
+            let eyewear: String?
+            let neckwear: String?
         }
         let body = try req.content.decode(Body.self)
         let playerID    = try validatedPlayerID(body.playerID)
@@ -328,11 +360,27 @@ struct MiniGameController: RouteCollection {
         let answererID:   String = aiRole == .answerer ? aiID          : playerID
         let answererName: String = aiRole == .answerer ? aiName        : displayName
 
-        let state = GameState(
+        var state = GameState(
             roomCode: roomCode,
             answererID: answererID,
             answererDisplayName: answererName
         )
+        // Answerer-seat appearance: the AI gets its fixed per-difficulty look;
+        // a human answerer gets whatever the client sent (nil for old clients).
+        // When the AI is the QUESTIONER its appearance is stamped by
+        // connectQuestioner when AIPlayer takes the seat; a human questioner's
+        // rides the PendingConnection below.
+        if aiRole == .answerer {
+            state.answererAvatarID = difficulty.aiAvatarID
+            state.answererHeadwear = difficulty.aiHeadwear
+            state.answererEyewear  = difficulty.aiEyewear
+            state.answererNeckwear = difficulty.aiNeckwear
+        } else {
+            state.answererAvatarID = sanitizedCosmetic(body.avatarID)
+            state.answererHeadwear = sanitizedCosmetic(body.headwear)
+            state.answererEyewear  = sanitizedCosmetic(body.eyewear)
+            state.answererNeckwear = sanitizedCosmetic(body.neckwear)
+        }
 
         let session = GameSession(
             roomCode: roomCode,
@@ -354,7 +402,11 @@ struct MiniGameController: RouteCollection {
                 playerID: playerID,
                 roomCode: roomCode,
                 role: humanRole,
-                displayName: displayName
+                displayName: displayName,
+                avatarID: sanitizedCosmetic(body.avatarID),
+                headwear: sanitizedCosmetic(body.headwear),
+                eyewear:  sanitizedCosmetic(body.eyewear),
+                neckwear: sanitizedCosmetic(body.neckwear)
             )
         )
 
@@ -421,6 +473,10 @@ struct MiniGameController: RouteCollection {
                 roomCode: roomCode,
                 playerID: playerID,
                 displayName: displayName,
+                avatarID: conn.avatarID,
+                headwear: conn.headwear,
+                eyewear:  conn.eyewear,
+                neckwear: conn.neckwear,
                 send: sendClosure
             )
             if connectionID != nil {

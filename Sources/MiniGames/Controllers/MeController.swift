@@ -51,15 +51,24 @@ struct MeController: RouteCollection {
     }
 
     // MARK: - GET /me/history
+    //
+    // Response is the original { games, wordsUnlocked } object PLUS the
+    // additive `history` array: up to 200 newest results with my role, the
+    // outcome from MY perspective, and the opponent's display name resolved
+    // via one batched account load ("Mochi AI" when the other side has no
+    // account — the AI's ephemeral id never maps to a device). The top-level
+    // shape is deliberately unchanged so shipped clients keep decoding.
 
     func history(req: Request) async throws -> HistoryResponse {
         let accountID = try req.account.requireID()
 
         let results = try await resultsForAccount(accountID, on: req.db)
 
-        // Recent games, newest first.
-        let games: [HistoryResponse.Game] = results
+        let newestFirst = results
             .sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
+
+        // Recent games, newest first (legacy shape, untouched).
+        let games: [HistoryResponse.Game] = newestFirst
             .map { r in
                 HistoryResponse.Game(
                     roomCode: r.roomCode,
@@ -72,6 +81,44 @@ struct MeController: RouteCollection {
                 )
             }
 
+        // Detailed entries (additive): 200 newest, opponents batch-loaded.
+        let recent = Array(newestFirst.prefix(200))
+        let opponentIDs = recent.compactMap { r -> UUID? in
+            r.$answererAccount.id == accountID
+                ? r.$questionerAccount.id
+                : r.$answererAccount.id
+        }
+        let opponents = try await accountsKeyedByID(opponentIDs, on: req.db)
+
+        let entries: [HistoryResponse.Entry] = recent.compactMap { r in
+            guard let id = r.id else { return nil }
+            let iAmAnswerer = r.$answererAccount.id == accountID
+            let opponentAccountID = iAmAnswerer
+                ? r.$questionerAccount.id
+                : r.$answererAccount.id
+
+            // No account on the other side → it was the AI (or a pre-account
+            // row); an account id that no longer resolves → generic fallback.
+            let opponentDisplayName: String
+            if let opponentAccountID {
+                opponentDisplayName = displayNameOrFallback(opponents[opponentAccountID]?.displayName)
+            } else {
+                opponentDisplayName = "Mochi AI"
+            }
+
+            return HistoryResponse.Entry(
+                id: id,
+                roomCode: r.roomCode,
+                myRole: iAmAnswerer ? "answerer" : "questioner",
+                // Same win convention as leaderboards (GameResult.countsAsWin).
+                outcome: r.countsAsWin(for: accountID) ? "won" : "lost",
+                opponentDisplayName: opponentDisplayName,
+                secret: r.secret,
+                questionsUsed: r.questionsUsed,
+                createdAt: r.createdAt ?? Date()
+            )
+        }
+
         // Distinct words unlocked (case-insensitive), preserving first-seen order.
         var seen = Set<String>()
         var words: [String] = []
@@ -83,7 +130,7 @@ struct MeController: RouteCollection {
             }
         }
 
-        return HistoryResponse(games: games, wordsUnlocked: words)
+        return HistoryResponse(games: games, wordsUnlocked: words, history: entries)
     }
 
     // MARK: - Shared query
@@ -106,6 +153,24 @@ struct MeController: RouteCollection {
             guard let id = r.id else { return true }
             return seen.insert(id).inserted
         }
+    }
+
+    /// Batch-load accounts and key them by id (same pattern as FriendsController).
+    private func accountsKeyedByID(_ ids: [UUID], on db: any Database) async throws -> [UUID: Account] {
+        guard !ids.isEmpty else { return [:] }
+        let accounts = try await Account.query(on: db)
+            .filter(\.$id ~~ Array(Set(ids)))
+            .all()
+        var byID: [UUID: Account] = [:]
+        for account in accounts {
+            if let id = account.id { byID[id] = account }
+        }
+        return byID
+    }
+
+    private func displayNameOrFallback(_ name: String?) -> String {
+        let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Player" : trimmed
     }
 }
 
@@ -151,6 +216,22 @@ struct HistoryResponse: Content {
         let questionsUsed: Int
         let playedAt: Date?
     }
+
+    /// Detailed history row (additive — see the `history` field below).
+    struct Entry: Content {
+        let id: UUID
+        let roomCode: String
+        let myRole: String              // "answerer" | "questioner"
+        let outcome: String             // "won" | "lost" from MY perspective
+        let opponentDisplayName: String // "Mochi AI" when no account on the other side
+        let secret: String
+        let questionsUsed: Int
+        let createdAt: Date
+    }
+
     let games: [Game]
     let wordsUnlocked: [String]
+    /// Up to 200 newest results with role/opponent resolved. ADDITIVE field —
+    /// old clients decode { games, wordsUnlocked } exactly as before.
+    let history: [Entry]
 }

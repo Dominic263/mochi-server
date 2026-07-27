@@ -81,7 +81,12 @@ struct FriendsController: RouteCollection {
                     accountID: otherID,
                     displayName: displayName,
                     gamesWon: s.won,
-                    gamesPlayed: s.played
+                    gamesPlayed: s.played,
+                    avatarID: other?.avatarID,
+                    headwear: other?.equippedHeadwear,
+                    eyewear: other?.equippedEyewear,
+                    neckwear: other?.equippedNeckwear,
+                    level: other?.level
                 ))
             } else {
                 let dto = FriendRequestDTO(
@@ -432,7 +437,13 @@ struct FriendsController: RouteCollection {
                         displayName: displayNameOrFallback(account.displayName),
                         wins: line.won,
                         gamesPlayed: line.played,
-                        streak: line.streak
+                        streak: line.streak,
+                        accountID: id,
+                        avatarID: account.avatarID,
+                        headwear: account.equippedHeadwear,
+                        eyewear: account.equippedEyewear,
+                        neckwear: account.equippedNeckwear,
+                        level: account.level
                     )
                 )
             }
@@ -586,6 +597,13 @@ struct FriendDTO: Content {
     let displayName: String
     let gamesWon: Int
     let gamesPlayed: Int
+    // Appearance + level (additive optional fields — nil for accounts that
+    // haven't synced cosmetics yet; old clients ignore unknown keys).
+    let avatarID: String?
+    let headwear: String?
+    let eyewear: String?
+    let neckwear: String?
+    let level: Int?
 }
 
 struct FriendRequestDTO: Content {
@@ -619,6 +637,38 @@ struct LeaderboardEntry: Content {
     let wins: Int
     let gamesPlayed: Int
     let streak: Int          // +N straight wins, -N straight losses, 0 = no games
+    // Additive optional fields (old clients ignore unknown keys). accountID
+    // lets new clients open GET /players/:accountID/profile from a row.
+    let accountID: UUID?
+    let avatarID: String?
+    let headwear: String?
+    let eyewear: String?
+    let neckwear: String?
+    let level: Int?
+
+    init(
+        displayName: String,
+        wins: Int,
+        gamesPlayed: Int,
+        streak: Int,
+        accountID: UUID? = nil,
+        avatarID: String? = nil,
+        headwear: String? = nil,
+        eyewear: String? = nil,
+        neckwear: String? = nil,
+        level: Int? = nil
+    ) {
+        self.displayName = displayName
+        self.wins = wins
+        self.gamesPlayed = gamesPlayed
+        self.streak = streak
+        self.accountID = accountID
+        self.avatarID = avatarID
+        self.headwear = headwear
+        self.eyewear = eyewear
+        self.neckwear = neckwear
+        self.level = level
+    }
 }
 
 struct MyRankResponse: Content {

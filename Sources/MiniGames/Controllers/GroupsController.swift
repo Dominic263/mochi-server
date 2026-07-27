@@ -227,11 +227,18 @@ struct GroupsController: RouteCollection {
         let entries = memberIDs
             .map { memberID -> LeaderboardEntry in
                 let line = lines[memberID] ?? LeaderboardStats.AccountLine()
+                let member = accountsByID[memberID]
                 return LeaderboardEntry(
-                    displayName: displayNameOrFallback(accountsByID[memberID]?.displayName),
+                    displayName: displayNameOrFallback(member?.displayName),
                     wins: line.won,
                     gamesPlayed: line.played,
-                    streak: line.streak
+                    streak: line.streak,
+                    accountID: memberID,
+                    avatarID: member?.avatarID,
+                    headwear: member?.equippedHeadwear,
+                    eyewear: member?.equippedEyewear,
+                    neckwear: member?.equippedNeckwear,
+                    level: member?.level
                 )
             }
             .sorted {

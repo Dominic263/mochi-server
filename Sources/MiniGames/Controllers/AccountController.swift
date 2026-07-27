@@ -22,11 +22,28 @@ struct AccountController: RouteCollection {
     //
     // Idempotent: same clientPlayerID always returns the same account. Creates a
     // new ANONYMOUS account + device the first time a clientPlayerID is seen.
+    //
+    // Appearance/progression sync (all OPTIONAL — old clients omit them and are
+    // unaffected):
+    //   • avatarID / equippedHeadwear / equippedEyewear / equippedNeckwear —
+    //     client-defined cosmetic ids, clipped to 40 chars, no catalog
+    //     validation. A plain optional can't distinguish "sent null" from
+    //     "field omitted", so the string sentinel "none" means CLEAR this slot
+    //     (write NULL); an absent field means don't touch it.
+    //   • xp / level — only ever move UP (reinstall protection: a fresh install
+    //     reporting xp 0 must not wipe the server's higher value).
 
     func bootstrap(req: Request) async throws -> AccountResponse {
         struct Body: Content {
             let clientPlayerID: String
             let displayName: String?
+            // Appearance + progression (additive, optional).
+            let avatarID: String?
+            let equippedHeadwear: String?
+            let equippedEyewear: String?
+            let equippedNeckwear: String?
+            let xp: Int?
+            let level: Int?
         }
         let body = try req.content.decode(Body.self)
 
@@ -48,11 +65,29 @@ struct AccountController: RouteCollection {
             // Keep the account's name in sync with the client's profile on
             // EVERY launch (it used to only be written once, so leaderboards
             // and friend lists were stuck showing "Player 1234" forever).
+            var dirty = false
             if let name = body.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
                !name.isEmpty,
                account.displayName != String(name.prefix(30))
             {
                 account.displayName = String(name.prefix(30))
+                dirty = true
+            }
+
+            // Appearance + progression sync (optional fields; see route docs).
+            if Self.applyAppearanceSync(
+                to: account,
+                avatarID: body.avatarID,
+                headwear: body.equippedHeadwear,
+                eyewear: body.equippedEyewear,
+                neckwear: body.equippedNeckwear,
+                xp: body.xp,
+                level: body.level
+            ) {
+                dirty = true
+            }
+
+            if dirty {
                 try await account.save(on: req.db)
             }
 
@@ -65,6 +100,17 @@ struct AccountController: RouteCollection {
             status: .anonymous,
             displayName: body.displayName,
             sessionToken: Self.makeSessionToken()
+        )
+        // Stamp any appearance/progression the client sent along, before the
+        // single initial save.
+        _ = Self.applyAppearanceSync(
+            to: account,
+            avatarID: body.avatarID,
+            headwear: body.equippedHeadwear,
+            eyewear: body.equippedEyewear,
+            neckwear: body.equippedNeckwear,
+            xp: body.xp,
+            level: body.level
         )
         try await account.save(on: req.db)
 
@@ -180,6 +226,58 @@ struct AccountController: RouteCollection {
 
     // MARK: - Helpers
 
+    /// Longest cosmetic id string the server will store.
+    static let maxCosmeticIDLength = 40
+
+    /// Applies the optional appearance/progression fields from a bootstrap
+    /// body to the account IN MEMORY (caller saves). Returns true if anything
+    /// changed.
+    ///
+    /// Cosmetic slots: absent/blank = don't touch; the sentinel "none" = clear
+    /// the slot (NULL); anything else = set, clipped to 40 chars.
+    /// xp/level: only ever move UP — a reinstalled client reporting lower
+    /// values must never regress the server's copy.
+    static func applyAppearanceSync(
+        to account: Account,
+        avatarID: String?,
+        headwear: String?,
+        eyewear: String?,
+        neckwear: String?,
+        xp: Int?,
+        level: Int?
+    ) -> Bool {
+        var changed = false
+
+        func applySlot(_ raw: String?, _ keyPath: ReferenceWritableKeyPath<Account, String?>) {
+            guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !trimmed.isEmpty
+            else { return }   // absent or blank → leave the slot alone
+            let newValue: String? = trimmed.lowercased() == "none"
+                ? nil                                        // sentinel → clear
+                : String(trimmed.prefix(maxCosmeticIDLength))
+            if account[keyPath: keyPath] != newValue {
+                account[keyPath: keyPath] = newValue
+                changed = true
+            }
+        }
+
+        applySlot(avatarID, \.avatarID)
+        applySlot(headwear, \.equippedHeadwear)
+        applySlot(eyewear,  \.equippedEyewear)
+        applySlot(neckwear, \.equippedNeckwear)
+
+        if let xp, xp > (account.xp ?? 0) {
+            account.xp = xp
+            changed = true
+        }
+        if let level, level > (account.level ?? 1) {
+            account.level = level
+            changed = true
+        }
+
+        return changed
+    }
+
     /// Opaque, URL-safe random token. Placeholder until full JWT sessions.
     static func makeSessionToken() -> String {
         let bytes = (0..<32).map { _ in UInt8.random(in: 0...255) }
@@ -198,11 +296,38 @@ struct AccountResponse: Content {
     let displayName: String?
     let sessionToken: String
 
-    init(accountID: UUID, status: String, displayName: String?, sessionToken: String) {
+    // Appearance + progression, echoed back so a reinstalled client can
+    // restore the server's copy (additive optional fields — old clients
+    // ignore unknown JSON keys).
+    let avatarID: String?
+    let equippedHeadwear: String?
+    let equippedEyewear: String?
+    let equippedNeckwear: String?
+    let xp: Int?
+    let level: Int?
+
+    init(
+        accountID: UUID,
+        status: String,
+        displayName: String?,
+        sessionToken: String,
+        avatarID: String? = nil,
+        equippedHeadwear: String? = nil,
+        equippedEyewear: String? = nil,
+        equippedNeckwear: String? = nil,
+        xp: Int? = nil,
+        level: Int? = nil
+    ) {
         self.accountID = accountID
         self.status = status
         self.displayName = displayName
         self.sessionToken = sessionToken
+        self.avatarID = avatarID
+        self.equippedHeadwear = equippedHeadwear
+        self.equippedEyewear = equippedEyewear
+        self.equippedNeckwear = equippedNeckwear
+        self.xp = xp
+        self.level = level
     }
 
     init(from account: Account) {
@@ -210,5 +335,11 @@ struct AccountResponse: Content {
         self.status = account.status
         self.displayName = account.displayName
         self.sessionToken = account.sessionToken
+        self.avatarID = account.avatarID
+        self.equippedHeadwear = account.equippedHeadwear
+        self.equippedEyewear = account.equippedEyewear
+        self.equippedNeckwear = account.equippedNeckwear
+        self.xp = account.xp
+        self.level = account.level
     }
 }

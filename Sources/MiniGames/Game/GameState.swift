@@ -85,6 +85,36 @@ struct GameState: Codable {
     /// so the questioner isn't billed for the answerer's hint-writing time.
     var hintRequestedAt: Date?
 
+    /// Set while a player is watching a rewarded ad (suggestion refresh, time
+    /// extension) — BOTH clocks freeze at this instant. endAdPause (or the
+    /// sweep's 120s auto-expiry) credits the paused time back to both
+    /// deadlines. Optional for backward-compatible state_json decoding.
+    var adPausedAt: Date?
+
+    /// Who started the current ad pause — only they (or the sweep) may end it.
+    var adPausedBy: String?
+
+    /// Ad pauses spent this game (nil = 0). Hard cap so the pause can never
+    /// become a free stall button.
+    var adPausesUsed: Int?
+
+    // MARK: Lobby/chat appearance (additive)
+    //
+    // Each seat's avatar + equipped cosmetics, threaded in from the create/join
+    // HTTP bodies (or fixed per difficulty for the AI seat). ALL optional so
+    // old persisted state_json rows — and old clients that never send them —
+    // keep decoding unchanged.
+
+    var answererAvatarID: String?
+    var answererHeadwear: String?
+    var answererEyewear: String?
+    var answererNeckwear: String?
+
+    var questionerAvatarID: String?
+    var questionerHeadwear: String?
+    var questionerEyewear: String?
+    var questionerNeckwear: String?
+
     init(roomCode: String, answererID: String, answererDisplayName: String) {
         self.roomCode = roomCode
         self.phase = .lobby
@@ -131,6 +161,18 @@ struct GameState: Codable {
         case answererStrikes
         case matchExtensionUsed
         case hintRequestedAt
+        case adPausedAt
+        case adPausedBy
+        case adPausesUsed
+
+        case answererAvatarID
+        case answererHeadwear
+        case answererEyewear
+        case answererNeckwear
+        case questionerAvatarID
+        case questionerHeadwear
+        case questionerEyewear
+        case questionerNeckwear
 
         // Old field name from previous server state.
         case hintsRemaining
@@ -172,6 +214,18 @@ struct GameState: Codable {
         self.answererStrikes = try container.decodeIfPresent(Int.self, forKey: .answererStrikes)
         self.matchExtensionUsed = try container.decodeIfPresent(Bool.self, forKey: .matchExtensionUsed)
         self.hintRequestedAt = try container.decodeIfPresent(Date.self, forKey: .hintRequestedAt)
+        self.adPausedAt = try container.decodeIfPresent(Date.self, forKey: .adPausedAt)
+        self.adPausedBy = try container.decodeIfPresent(String.self, forKey: .adPausedBy)
+        self.adPausesUsed = try container.decodeIfPresent(Int.self, forKey: .adPausesUsed)
+
+        self.answererAvatarID = try container.decodeIfPresent(String.self, forKey: .answererAvatarID)
+        self.answererHeadwear = try container.decodeIfPresent(String.self, forKey: .answererHeadwear)
+        self.answererEyewear = try container.decodeIfPresent(String.self, forKey: .answererEyewear)
+        self.answererNeckwear = try container.decodeIfPresent(String.self, forKey: .answererNeckwear)
+        self.questionerAvatarID = try container.decodeIfPresent(String.self, forKey: .questionerAvatarID)
+        self.questionerHeadwear = try container.decodeIfPresent(String.self, forKey: .questionerHeadwear)
+        self.questionerEyewear = try container.decodeIfPresent(String.self, forKey: .questionerEyewear)
+        self.questionerNeckwear = try container.decodeIfPresent(String.self, forKey: .questionerNeckwear)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -202,6 +256,18 @@ struct GameState: Codable {
         try container.encodeIfPresent(answererStrikes, forKey: .answererStrikes)
         try container.encodeIfPresent(matchExtensionUsed, forKey: .matchExtensionUsed)
         try container.encodeIfPresent(hintRequestedAt, forKey: .hintRequestedAt)
+        try container.encodeIfPresent(adPausedAt, forKey: .adPausedAt)
+        try container.encodeIfPresent(adPausedBy, forKey: .adPausedBy)
+        try container.encodeIfPresent(adPausesUsed, forKey: .adPausesUsed)
+
+        try container.encodeIfPresent(answererAvatarID, forKey: .answererAvatarID)
+        try container.encodeIfPresent(answererHeadwear, forKey: .answererHeadwear)
+        try container.encodeIfPresent(answererEyewear, forKey: .answererEyewear)
+        try container.encodeIfPresent(answererNeckwear, forKey: .answererNeckwear)
+        try container.encodeIfPresent(questionerAvatarID, forKey: .questionerAvatarID)
+        try container.encodeIfPresent(questionerHeadwear, forKey: .questionerHeadwear)
+        try container.encodeIfPresent(questionerEyewear, forKey: .questionerEyewear)
+        try container.encodeIfPresent(questionerNeckwear, forKey: .questionerNeckwear)
     }
 
     // MARK: Turn ownership
@@ -219,9 +285,11 @@ struct GameState: Codable {
 
     private func secondsRemaining(until deadline: Date?) -> Int? {
         guard phase == .playing, let deadline else { return nil }
-        // While a hint is being written the match clock is FROZEN at the
-        // moment of the request (provideHint credits the elapsed time back).
-        if let pausedAt = hintRequestedAt {
+        // While a hint is being written or an ad is playing, the clock is
+        // FROZEN at the moment the pause began (the resume path credits the
+        // elapsed time back). If both are somehow set, freeze at the earlier.
+        let pauseStarts = [hintRequestedAt, adPausedAt].compactMap { $0 }
+        if let pausedAt = pauseStarts.min() {
             return max(0, Int(deadline.timeIntervalSince(pausedAt).rounded()))
         }
         return max(0, Int(deadline.timeIntervalSinceNow.rounded()))
@@ -248,7 +316,15 @@ struct GameState: Codable {
                     .count
             },
             matchSecondsRemaining: secondsRemaining(until: matchDeadline),
-            turnSecondsRemaining: secondsRemaining(until: turnDeadline)
+            turnSecondsRemaining: secondsRemaining(until: turnDeadline),
+            answererAvatarID: answererAvatarID,
+            answererHeadwear: answererHeadwear,
+            answererEyewear: answererEyewear,
+            answererNeckwear: answererNeckwear,
+            questionerAvatarID: questionerAvatarID,
+            questionerHeadwear: questionerHeadwear,
+            questionerEyewear: questionerEyewear,
+            questionerNeckwear: questionerNeckwear
         )
     }
 
@@ -266,7 +342,15 @@ struct GameState: Codable {
             hintsRemaining: freeHintsRemaining,
             secretWordCount: nil,
             matchSecondsRemaining: secondsRemaining(until: matchDeadline),
-            turnSecondsRemaining: secondsRemaining(until: turnDeadline)
+            turnSecondsRemaining: secondsRemaining(until: turnDeadline),
+            answererAvatarID: answererAvatarID,
+            answererHeadwear: answererHeadwear,
+            answererEyewear: answererEyewear,
+            answererNeckwear: answererNeckwear,
+            questionerAvatarID: questionerAvatarID,
+            questionerHeadwear: questionerHeadwear,
+            questionerEyewear: questionerEyewear,
+            questionerNeckwear: questionerNeckwear
         )
     }
 
@@ -299,6 +383,17 @@ struct GameStateView: Codable {
     // Server-enforced clocks (additive; old clients ignore unknown keys).
     let matchSecondsRemaining: Int?
     let turnSecondsRemaining: Int?
+    // Seat appearance (additive; old clients ignore unknown keys). Both views
+    // carry BOTH seats so each player can render the OTHER player's avatar
+    // and cosmetics in the lobby/chat.
+    let answererAvatarID: String?
+    let answererHeadwear: String?
+    let answererEyewear: String?
+    let answererNeckwear: String?
+    let questionerAvatarID: String?
+    let questionerHeadwear: String?
+    let questionerEyewear: String?
+    let questionerNeckwear: String?
 
     init(
         roomCode: String,
@@ -313,7 +408,15 @@ struct GameStateView: Codable {
         hintsRemaining: Int = 3,
         secretWordCount: Int? = nil,
         matchSecondsRemaining: Int? = nil,
-        turnSecondsRemaining: Int? = nil
+        turnSecondsRemaining: Int? = nil,
+        answererAvatarID: String? = nil,
+        answererHeadwear: String? = nil,
+        answererEyewear: String? = nil,
+        answererNeckwear: String? = nil,
+        questionerAvatarID: String? = nil,
+        questionerHeadwear: String? = nil,
+        questionerEyewear: String? = nil,
+        questionerNeckwear: String? = nil
     ) {
         self.roomCode = roomCode
         self.phase = phase
@@ -328,5 +431,13 @@ struct GameStateView: Codable {
         self.secretWordCount = secretWordCount
         self.matchSecondsRemaining = matchSecondsRemaining
         self.turnSecondsRemaining = turnSecondsRemaining
+        self.answererAvatarID = answererAvatarID
+        self.answererHeadwear = answererHeadwear
+        self.answererEyewear = answererEyewear
+        self.answererNeckwear = answererNeckwear
+        self.questionerAvatarID = questionerAvatarID
+        self.questionerHeadwear = questionerHeadwear
+        self.questionerEyewear = questionerEyewear
+        self.questionerNeckwear = questionerNeckwear
     }
 }

@@ -75,6 +75,8 @@ public func configure(_ app: Application) async throws {
     app.migrations.add(CreateFriendGroupMember())    // Groups — memberships
     app.migrations.add(CreateCoinGift())             // Gifts — daily coin gift ledger
     app.migrations.add(CreatePushToken())            // Push — APNs device tokens
+    app.migrations.add(AddAppearanceToAccount())     // Cosmetics + xp/level on accounts
+    app.migrations.add(CreateWordDefinition())       // Cached kid-friendly word definitions
     try await app.autoMigrate()
 
     // MARK: - Leaf (server-side HTML templating for the marketing site)

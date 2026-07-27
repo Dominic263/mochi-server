@@ -29,8 +29,8 @@ struct GiftsController: RouteCollection {
     //
     // Body: { "friendshipID": "<uuid>" }
     // The sender must be part of an ACCEPTED friendship; the gift goes to the
-    // other side. One gift per sender per UTC calendar day, regardless of
-    // recipient. Amount is fixed at 100.
+    // other side. One gift per sender PER RECIPIENT per UTC calendar day —
+    // you can gift every friend once a day. Amount is fixed at 100.
 
     func send(req: Request) async throws -> Response {
         struct Body: Content {
@@ -51,13 +51,14 @@ struct GiftsController: RouteCollection {
             throw Abort(.conflict, reason: "You can only send gifts to accepted friends.")
         }
 
-        // One gift per sender per UTC calendar day.
+        // One gift per sender per recipient per UTC calendar day.
         let alreadySent = try await CoinGift.query(on: req.db)
             .filter(\.$from.$id == accountID)
+            .filter(\.$to.$id == friendID)
             .filter(\.$createdAt >= Self.startOfTodayUTC())
             .first()
         guard alreadySent == nil else {
-            throw Abort(.conflict, reason: "You've already sent today's gift.")
+            throw Abort(.conflict, reason: "You've already sent this friend today's gift.")
         }
 
         let gift = CoinGift(

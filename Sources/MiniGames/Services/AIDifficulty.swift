@@ -104,6 +104,35 @@ enum AIDifficulty: String, Codable, Sendable {
         }
     }
 
+    // ── Lobby appearance for the AI seat ──
+    // Fixed per difficulty so players learn to read the opponent at a glance.
+
+    var aiAvatarID: String {
+        switch self {
+        case .easy:   return "mint"
+        case .medium: return "sky"
+        case .hard:   return "coral"
+        }
+    }
+
+    var aiHeadwear: String? {
+        switch self {
+        case .easy:   return "party_hat"
+        case .medium: return nil
+        case .hard:   return "wizard_hat"
+        }
+    }
+
+    var aiEyewear: String? {
+        switch self {
+        case .easy:   return nil
+        case .medium: return "round_glasses"
+        case .hard:   return "small_sunglasses"
+        }
+    }
+
+    var aiNeckwear: String? { nil }
+
     // ── Answerer: hint style ──
 
     var hintStyle: String {
