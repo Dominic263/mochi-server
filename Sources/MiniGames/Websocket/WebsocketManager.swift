@@ -199,8 +199,16 @@ final class WebSocketManager: @unchecked Sendable {
 
     // MARK: - Connection
 
-    /// Connects the answerer's socket. Returns a connection id the caller must
-    /// hand back to disconnect() so a stale socket can't tear down a newer one.
+    /// Connects the answerer's socket and hands them the current state in the
+    /// SAME critical section. Returns a connection id the caller must hand back
+    /// to disconnect() so a stale socket can't tear down a newer one.
+    ///
+    /// The snapshot is sent from inside the barrier on purpose: reading the
+    /// state after the lock released left a window where a questioner could
+    /// join in between, so the answerer received opponentJoined and THEN a
+    /// snapshot built before the join — which reset opponentConnected to false
+    /// on their client and left the Start button disabled with nothing further
+    /// coming to correct it.
     @discardableResult
     func connectAnswerer(roomCode: String, send: @escaping @Sendable (String) -> Void) -> UUID? {
         queue.sync(flags: .barrier) {
@@ -212,7 +220,24 @@ final class WebSocketManager: @unchecked Sendable {
             // If answerer reconnects, cancel any pending cleanup
             self.cancelCleanupTimer(for: roomCode)
             print("✅ [\(roomCode)] Answerer connected/reconnected")
+            send(GameEventEnvelope.stateSnapshot(room.state.answererView()).toJSON())
             return connectionID
+        }
+    }
+
+    /// Tells the answerer their opponent has arrived: the semantic event AND a
+    /// fresh snapshot, in that order, atomically.
+    ///
+    /// The snapshot is what makes this survivable. opponentJoined is fired
+    /// exactly once in a room's lifetime, and the host is very often away
+    /// (sharing the room code) when it goes out — a dropped one used to strand
+    /// both players forever. Any snapshot the answerer receives now carries
+    /// opponentConnected, so reconnecting is enough to recover.
+    func announceQuestionerJoined(roomCode: String, displayName: String) {
+        queue.async(flags: .barrier) {
+            guard let room = self.rooms[roomCode] else { return }
+            room.sendToAnswerer(.opponentJoined(displayName: displayName))
+            room.sendToAnswerer(.stateSnapshot(room.state.answererView()))
         }
     }
 

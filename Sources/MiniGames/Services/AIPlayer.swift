@@ -125,8 +125,10 @@ actor AIPlayer {
             WebSocketManager.shared.routeToAI(playerID: aiID, roomCode: code, json: json)
         }
 
-        WebSocketManager.shared.sendToAnswerer(
-            in: code, event: .opponentJoined(displayName: aiName)
+        // Event + snapshot, same as a human join — so the answerer's lobby
+        // state never depends on catching one fire-once event.
+        WebSocketManager.shared.announceQuestionerJoined(
+            roomCode: code, displayName: aiName
         )
 
         for await wrapper in stream {

@@ -463,9 +463,13 @@ struct MiniGameController: RouteCollection {
         switch role {
 
         case .answerer:
+            // connectAnswerer sends the opening snapshot itself, inside the
+            // same critical section as the seat assignment.
             connectionID = WebSocketManager.shared.connectAnswerer(roomCode: roomCode, send: sendClosure)
-            if let state = WebSocketManager.shared.currentState(for: roomCode) {
-                sendClosure(GameEventEnvelope.stateSnapshot(state.answererView()).toJSON())
+            if connectionID == nil {
+                sendClosure(GameEventEnvelope.error("Room not found.").toJSON())
+                ws.close(promise: nil)
+                return
             }
 
         case .questioner:
@@ -501,9 +505,9 @@ struct MiniGameController: RouteCollection {
                         }
                     }
 
-                    WebSocketManager.shared.sendToAnswerer(
-                        in: roomCode,
-                        event: .opponentJoined(displayName: displayName)
+                    WebSocketManager.shared.announceQuestionerJoined(
+                        roomCode: roomCode,
+                        displayName: displayName
                     )
                 }
 
